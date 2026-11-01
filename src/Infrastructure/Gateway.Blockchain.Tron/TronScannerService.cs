@@ -137,7 +137,13 @@ public class TronScannerService : ITronScannerService
                 var blockTimestamp = item.GetProperty("block_timestamp").GetInt64();
 
                 // Fail-Closed Validation via SolidityNode
-                var txDetail = await VerifySolidifiedTransactionAsync(txHash, invoice.DepositAddress, amountUnits, ct);
+                var txDetail = await VerifySolidifiedTransactionAsync(
+                    txHash, 
+                    invoice.DepositAddress, 
+                    amountUnits, 
+                    eventIndex, 
+                    ct);
+                
                 if (!txDetail.IsSolidified || !txDetail.IsSuccess)
                 {
                     _logger.LogWarning("Tx {TxHash} rejected: IsSolidified={Solidified}, IsSuccess={Success}.", txHash, txDetail.IsSolidified, txDetail.IsSuccess);
@@ -249,6 +255,7 @@ public class TronScannerService : ITronScannerService
         string txHash, 
         string expectedToAddress, 
         long expectedAmountUnits, 
+        int expectedEventIndex,
         CancellationToken ct)
     {
         try
@@ -262,7 +269,6 @@ public class TronScannerService : ITronScannerService
             var json = await res.Content.ReadAsStringAsync(ct);
             using var doc = JsonDocument.Parse(json);
 
-            // Fail-closed validation
             if (doc.RootElement.ValueKind != JsonValueKind.Object ||
                 !doc.RootElement.TryGetProperty("blockNumber", out var bNum))
             {
@@ -286,43 +292,126 @@ public class TronScannerService : ITronScannerService
                 return (true, false, blockNumber);
             }
 
-            bool eventVerified = false;
-            foreach (var log in logs.EnumerateArray())
+            var logsArray = logs.EnumerateArray().ToList();
+            if (expectedEventIndex < 0 || expectedEventIndex >= logsArray.Count)
             {
-                var contractAddress = log.TryGetProperty("address", out var cAddr) ? cAddr.GetString() : null;
-                if (!string.Equals(contractAddress, _usdtContractAddress, StringComparison.OrdinalIgnoreCase))
-                    continue;
-
-                if (log.TryGetProperty("topics", out var topics) && topics.GetArrayLength() >= 3)
-                {
-                    var signature = topics[0].GetString();
-                    // Transfer(address,address,uint256) signature
-                    if (!string.Equals(signature, "ddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef", StringComparison.OrdinalIgnoreCase))
-                        continue;
-
-                    // Validate event amount from log data
-                    if (log.TryGetProperty("data", out var dataProp))
-                    {
-                        var dataHex = dataProp.GetString() ?? string.Empty;
-                        if (!string.IsNullOrEmpty(dataHex))
-                        {
-                            var parsedUnits = Convert.ToInt64(dataHex, 16);
-                            if (parsedUnits == expectedAmountUnits)
-                            {
-                                eventVerified = true;
-                                break;
-                            }
-                        }
-                    }
-                }
+                _logger.LogWarning("Event index {Index} is out of range for Tx {TxHash}", expectedEventIndex, txHash);
+                return (true, false, blockNumber);
             }
 
-            return (true, eventVerified, blockNumber);
+            var log = logsArray[expectedEventIndex];
+            var contractAddress = log.TryGetProperty("address", out var cAddr) ? cAddr.GetString() : null;
+            
+            // Normalize TRON USDT Contract
+            var expectedContractHex = TronAddressToHex(_usdtContractAddress);
+            if (!string.Equals(contractAddress, expectedContractHex, StringComparison.OrdinalIgnoreCase) &&
+                !string.Equals(contractAddress, _usdtContractAddress, StringComparison.OrdinalIgnoreCase))
+            {
+                return (true, false, blockNumber);
+            }
+
+            if (!log.TryGetProperty("topics", out var topics) || topics.GetArrayLength() < 3)
+            {
+                return (true, false, blockNumber);
+            }
+
+            var signature = topics[0].GetString();
+            if (!string.Equals(signature, "ddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef", StringComparison.OrdinalIgnoreCase))
+            {
+                return (true, false, blockNumber);
+            }
+
+            // Decode recipient from topics[2]
+            var recipientTopicHex = topics[2].GetString() ?? string.Empty;
+            if (recipientTopicHex.Length < 40) return (true, false, blockNumber);
+            
+            var recipientEvmAddress = recipientTopicHex[^40..]; // Last 20 bytes
+            var decodedRecipientTron = EvmHexToTronAddress(recipientEvmAddress);
+
+            if (!string.Equals(decodedRecipientTron, expectedToAddress, StringComparison.OrdinalIgnoreCase))
+            {
+                _logger.LogWarning("Recipient mismatch for Tx {TxHash}. Expected {Exp}, Got {Actual}", txHash, expectedToAddress, decodedRecipientTron);
+                return (true, false, blockNumber);
+            }
+
+            // Safe uint256 amount parsing
+            if (!log.TryGetProperty("data", out var dataProp)) return (true, false, blockNumber);
+            var dataHex = dataProp.GetString() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(dataHex)) return (true, false, blockNumber);
+
+            if (!System.Numerics.BigInteger.TryParse(dataHex, System.Globalization.NumberStyles.HexNumber, null, out var parsedBigInt) ||
+                parsedBigInt < 0 || parsedBigInt > long.MaxValue || (long)parsedBigInt != expectedAmountUnits)
+            {
+                _logger.LogWarning("Amount mismatch or uint256 overflow for Tx {TxHash}", txHash);
+                return (true, false, blockNumber);
+            }
+
+            return (true, true, blockNumber);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error verifying solidified transaction {TxHash}", txHash);
             return (false, false, 0);
         }
+    }
+
+    private static string EvmHexToTronAddress(string hex20)
+    {
+        var raw = Convert.FromHexString(hex20);
+        var payload = new byte[21];
+        payload[0] = 0x41; // TRON Mainnet Address Prefix
+        Buffer.BlockCopy(raw, 0, payload, 1, 20);
+        
+        using var sha256 = System.Security.Cryptography.SHA256.Create();
+        var h1 = sha256.ComputeHash(payload);
+        var h2 = sha256.ComputeHash(h1);
+        
+        var combined = new byte[25];
+        Buffer.BlockCopy(payload, 0, combined, 0, 21);
+        Buffer.BlockCopy(h2, 0, combined, 21, 4);
+
+        const string alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+        var intData = new System.Numerics.BigInteger(combined, isUnsigned: true, isBigEndian: true);
+        var res = string.Empty;
+        while (intData > 0)
+        {
+            intData = System.Numerics.BigInteger.DivRem(intData, 58, out var rem);
+            res = alphabet[(int)rem] + res;
+        }
+        for (var i = 0; i < combined.Length && combined[i] == 0; i++) res = '1' + res;
+        return res;
+    }
+    
+    private static string TronAddressToHex(string base58Address)
+    {
+        var bytes = Base58CheckDecode(base58Address);
+        // Skip first byte (0x41) for standard EVM address ABI parameter / log comparison
+        return Convert.ToHexString(bytes.AsSpan(1)).ToLowerInvariant();
+    }
+
+    private static byte[] Base58CheckDecode(string base58)
+    {
+        const string alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+        var intData = System.Numerics.BigInteger.Zero;
+
+        for (var i = 0; i < base58.Length; i++)
+        {
+            var index = alphabet.IndexOf(base58[i]);
+            if (index < 0) throw new FormatException("Invalid Base58 character.");
+            intData = intData * 58 + index;
+        }
+
+        var bytes = intData.ToByteArray(isUnsigned: true, isBigEndian: true);
+        var leadingZeros = 0;
+        for (var i = 0; i < base58.Length && base58[i] == '1'; i++)
+            leadingZeros++;
+
+        var result = new byte[leadingZeros + bytes.Length];
+        Buffer.BlockCopy(bytes, 0, result, leadingZeros, bytes.Length);
+
+        // Exclude 4-byte checksum at the end
+        var payload = new byte[result.Length - 4];
+        Buffer.BlockCopy(result, 0, payload, 0, payload.Length);
+        return payload;
     }
 }

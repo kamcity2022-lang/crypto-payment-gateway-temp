@@ -115,6 +115,7 @@ public class PostgreSqlIntegrationTests : IAsyncLifetime
         var rawWebhookSecret = "whsec_test_secret_1234567890";
         var encryptedSecret = _secretProtector.Encrypt(rawWebhookSecret);
 
+        _wireMockServer.Reset();
         _wireMockServer
             .Given(Request.Create().WithPath("/webhook-concurrent").UsingPost())
             .RespondWith(Response.Create()
@@ -134,7 +135,6 @@ public class PostgreSqlIntegrationTests : IAsyncLifetime
         _dbContext.OutboxEvents.Add(outbox);
         await _dbContext.SaveChangesAsync();
 
-        // تضمین این که NextAttemptAtUtc از زمان جاری کوئری عقب‌تر است
         await _dbContext.Database.ExecuteSqlInterpolatedAsync(
             $"UPDATE \"OutboxEvents\" SET \"NextAttemptAtUtc\" = {DateTime.UtcNow.AddMinutes(-5)} WHERE \"Id\" = {outbox.Id}");
 
@@ -151,21 +151,34 @@ public class PostgreSqlIntegrationTests : IAsyncLifetime
         var dispatcher1 = new WebhookDispatcher(db1, client1, _secretProtector, NullLogger<WebhookDispatcher>.Instance, _configuration);
         var dispatcher2 = new WebhookDispatcher(db2, client2, _secretProtector, NullLogger<WebhookDispatcher>.Instance, _configuration);
 
-        // اجرای همزمان دو ورکر مجزا با کانکشن‌های مستقل
-        var task1 = dispatcher1.DispatchPendingWebhooksAsync(CancellationToken.None);
-        var task2 = dispatcher2.DispatchPendingWebhooksAsync(CancellationToken.None);
+        await Task.WhenAll(
+            dispatcher1.DispatchPendingWebhooksAsync(CancellationToken.None),
+            dispatcher2.DispatchPendingWebhooksAsync(CancellationToken.None)
+        );
 
-        await Task.WhenAll(task1, task2);
-
-        // ایجاد یک DbContext کاملاً تمیز و تازه برای راستی‌آزمایی مقدار نهایی از دیسک
         await using var verifyDb = new GatewayDbContext(options);
-        var refreshed = await verifyDb.OutboxEvents
-            .AsNoTracking()
-            .FirstOrDefaultAsync(o => o.Id == outbox.Id);
+        var refreshed = await verifyDb.OutboxEvents.AsNoTracking().FirstOrDefaultAsync(o => o.Id == outbox.Id);
 
         refreshed.Should().NotBeNull();
         refreshed!.IsProcessed.Should().BeTrue();
-        refreshed.AttemptCount.Should().Be(1); // اثبات این که دقیقا یک ورکر پردازش کرد و دیگری تکرار نکرد
+        refreshed.AttemptCount.Should().Be(1);
+
+        // Assert exactly one HTTP request was received by WireMock
+        var receivedRequests = _wireMockServer.LogEntries;
+        receivedRequests.Should().HaveCount(1);
+
+        var request = receivedRequests.First().RequestMessage;
+        request.Headers.Should().ContainKey("X-CryptoGateway-Signature");
+        request.Headers.Should().ContainKey("X-CryptoGateway-Timestamp");
+        request.Headers.Should().ContainKey("X-CryptoGateway-Event-Id");
+
+        // Verify HMAC signature
+        var timestamp = request.Headers["X-CryptoGateway-Timestamp"].First();
+        var signature = request.Headers["X-CryptoGateway-Signature"].First();
+        var payloadToSign = $"{timestamp}.{outbox.Payload}";
+        var expectedSig = WebhookDispatcher.ComputeHmacSha256(payloadToSign, rawWebhookSecret);
+
+        signature.Should().Be(expectedSig);
     }
 
     [Fact]

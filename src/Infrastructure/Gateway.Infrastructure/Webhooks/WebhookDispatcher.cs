@@ -1,5 +1,7 @@
 ﻿using System;
+using System.Net;
 using System.Net.Http;
+using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
@@ -138,5 +140,30 @@ public class WebhookDispatcher : IWebhookDispatcher
         using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(rawSecret));
         var hash = hmac.ComputeHash(Encoding.UTF8.GetBytes(data));
         return Convert.ToHexString(hash).ToLowerInvariant();
+    }
+    
+    private static HttpClient CreateSecureHttpClient(bool allowLoopback)
+    {
+        var handler = new SocketsHttpHandler
+        {
+            AllowAutoRedirect = false, // Strictly disable automatic redirects
+            ConnectTimeout = TimeSpan.FromSeconds(5),
+            ConnectCallback = async (context, cancellationToken) =>
+            {
+                var entry = await Dns.GetHostEntryAsync(context.DnsEndPoint.Host, cancellationToken);
+                var targetIp = entry.AddressList.FirstOrDefault();
+
+                if (targetIp == null || (!allowLoopback && SsrfValidator.IsProhibitedIp(targetIp)))
+                {
+                    throw new SocketException((int)SocketError.AccessDenied);
+                }
+
+                var socket = new Socket(targetIp.AddressFamily, SocketType.Stream, ProtocolType.Tcp);
+                await socket.ConnectAsync(targetIp, context.DnsEndPoint.Port, cancellationToken);
+                return new NetworkStream(socket, ownsSocket: true);
+            }
+        };
+
+        return new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(10) };
     }
 }
