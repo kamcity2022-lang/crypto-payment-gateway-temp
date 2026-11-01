@@ -76,11 +76,15 @@ public class MerchantsController : ControllerBase
             accountXPub: request.TronAccountXPub.Trim(),
             network: "TRON"
         );
+        
+        merchant.SetDefaultWebhookUrl(request.WebhookUrl);
 
         _dbContext.Merchants.Add(merchant);
         _dbContext.Wallets.Add(wallet);
 
         await _dbContext.SaveChangesAsync(ct);
+        
+        
 
         return CreatedAtAction(nameof(GetProfile), new { }, new RegisterMerchantResponse
         {

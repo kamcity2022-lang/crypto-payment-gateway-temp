@@ -19,6 +19,7 @@ public class TronScannerService : ITronScannerService
 {
     private readonly GatewayDbContext _dbContext;
     private readonly HttpClient _httpClient;
+    private readonly IConfiguration _configuration; // ۱. اضافه شدن فیلد
     private readonly ILogger<TronScannerService> _logger;
     private readonly string _usdtContractAddress;
 
@@ -30,9 +31,10 @@ public class TronScannerService : ITronScannerService
     {
         _dbContext = dbContext;
         _httpClient = httpClient;
+        _configuration = configuration; // ۲. مقداردهی فیلد
         _logger = logger;
         _usdtContractAddress = configuration["Tron:UsdtContractAddress"] 
-            ?? throw new InvalidOperationException("Configuration 'Tron:UsdtContractAddress' is required.");
+                               ?? throw new InvalidOperationException("Configuration 'Tron:UsdtContractAddress' is required.");
     }
 
     public async Task ScanPendingDepositsAsync(CancellationToken cancellationToken)
@@ -46,9 +48,12 @@ public class TronScannerService : ITronScannerService
 
         var now = DateTime.UtcNow;
 
-        // Explicit configurable monitoring policies
-        var latePaymentRetention = now.AddDays(-30);    // Monitor expired invoices for 30 days for late payments
-        var overpaymentRetention = now.AddDays(-7);     // Monitor paid invoices for 7 days for overpayments
+        // ۳. خواندن بازه‌های رصد از _configuration بدون نیاز به GetValue یا وابستگی خارجی
+        var lateDays = int.TryParse(_configuration["Tron:Scanner:LatePaymentRetentionDays"], out var l) ? l : 30;
+        var overDays = int.TryParse(_configuration["Tron:Scanner:OverpaymentRetentionDays"], out var o) ? o : 7;
+
+        var latePaymentRetention = now.AddDays(-lateDays);
+        var overpaymentRetention = now.AddDays(-overDays);
 
         var invoices = await _dbContext.Invoices
             .Include(i => i.Transfers)
@@ -107,6 +112,7 @@ public class TronScannerService : ITronScannerService
 
             if (!doc.RootElement.TryGetProperty("data", out var dataElement) || dataElement.GetArrayLength() == 0)
             {
+                cursor.SetFingerprint(null);
                 break;
             }
 
@@ -131,7 +137,7 @@ public class TronScannerService : ITronScannerService
                 var blockTimestamp = item.GetProperty("block_timestamp").GetInt64();
 
                 // Fail-Closed Validation via SolidityNode
-                var txDetail = await VerifySolidifiedTransactionAsync(txHash, ct);
+                var txDetail = await VerifySolidifiedTransactionAsync(txHash, invoice.DepositAddress, amountUnits, ct);
                 if (!txDetail.IsSolidified || !txDetail.IsSuccess)
                 {
                     _logger.LogWarning("Tx {TxHash} rejected: IsSolidified={Solidified}, IsSuccess={Success}.", txHash, txDetail.IsSolidified, txDetail.IsSuccess);
@@ -239,7 +245,11 @@ public class TronScannerService : ITronScannerService
         return 0;
     }
 
-    public async Task<(bool IsSolidified, bool IsSuccess, ulong BlockNumber)> VerifySolidifiedTransactionAsync(string txHash, CancellationToken ct)
+    public async Task<(bool IsSolidified, bool IsSuccess, ulong BlockNumber)> VerifySolidifiedTransactionAsync(
+        string txHash, 
+        string expectedToAddress, 
+        long expectedAmountUnits, 
+        CancellationToken ct)
     {
         try
         {
@@ -247,7 +257,6 @@ public class TronScannerService : ITronScannerService
             using var content = new StringContent(jsonPayload, Encoding.UTF8, "application/json");
             
             var res = await _httpClient.PostAsync("https://api.trongrid.io/walletsolidity/gettransactioninfobyid", content, ct);
-
             if (!res.IsSuccessStatusCode) return (false, false, 0);
 
             var json = await res.Content.ReadAsStringAsync(ct);
@@ -263,7 +272,7 @@ public class TronScannerService : ITronScannerService
             ulong blockNumber = (ulong)bNum.GetInt64();
             if (blockNumber == 0) return (false, false, 0);
 
-            // Receipt must exist and explicitly equal SUCCESS
+            // Receipt validation
             if (!doc.RootElement.TryGetProperty("receipt", out var receipt) ||
                 !receipt.TryGetProperty("result", out var resultStr) ||
                 !string.Equals(resultStr.GetString(), "SUCCESS", StringComparison.OrdinalIgnoreCase))
@@ -271,7 +280,44 @@ public class TronScannerService : ITronScannerService
                 return (true, false, blockNumber);
             }
 
-            return (true, true, blockNumber);
+            // TRC-20 Transfer Event Validation
+            if (!doc.RootElement.TryGetProperty("log", out var logs) || logs.GetArrayLength() == 0)
+            {
+                return (true, false, blockNumber);
+            }
+
+            bool eventVerified = false;
+            foreach (var log in logs.EnumerateArray())
+            {
+                var contractAddress = log.TryGetProperty("address", out var cAddr) ? cAddr.GetString() : null;
+                if (!string.Equals(contractAddress, _usdtContractAddress, StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                if (log.TryGetProperty("topics", out var topics) && topics.GetArrayLength() >= 3)
+                {
+                    var signature = topics[0].GetString();
+                    // Transfer(address,address,uint256) signature
+                    if (!string.Equals(signature, "ddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef", StringComparison.OrdinalIgnoreCase))
+                        continue;
+
+                    // Validate event amount from log data
+                    if (log.TryGetProperty("data", out var dataProp))
+                    {
+                        var dataHex = dataProp.GetString() ?? string.Empty;
+                        if (!string.IsNullOrEmpty(dataHex))
+                        {
+                            var parsedUnits = Convert.ToInt64(dataHex, 16);
+                            if (parsedUnits == expectedAmountUnits)
+                            {
+                                eventVerified = true;
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+
+            return (true, eventVerified, blockNumber);
         }
         catch (Exception ex)
         {

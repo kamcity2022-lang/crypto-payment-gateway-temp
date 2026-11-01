@@ -12,6 +12,7 @@ using Gateway.Application.DTOs;
 using Gateway.Blockchain.Tron;
 using Gateway.Domain.Entities;
 using Gateway.Domain.Enums;
+using Gateway.Infrastructure.Security;
 using Gateway.Persistence;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -33,6 +34,11 @@ public class InvoicesController : ControllerBase
     [RequireMerchantSignature]
     public async Task<IActionResult> CreateInvoice([FromBody] CreateInvoiceRequest request, CancellationToken ct)
     {
+        if (!SsrfValidator.IsDestinationSafe(request.CallbackUrl, allowHttp: false))
+        {
+            return BadRequest(new { error = "Invalid or prohibited callback URL destination." });
+        }
+        
         var merchantId = (Guid)HttpContext.Items["MerchantId"]!;
 
         var fiatCurrency = request.FiatCurrency.Trim().ToUpperInvariant();

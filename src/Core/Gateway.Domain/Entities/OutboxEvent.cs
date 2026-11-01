@@ -58,6 +58,7 @@ public class OutboxEvent
 
     public void RecordSuccess()
     {
+        AttemptCount++;
         IsProcessed = true;
         NextAttemptAtUtc = null;
         LockedUntilUtc = null;

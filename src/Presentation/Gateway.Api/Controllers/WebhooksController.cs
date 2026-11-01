@@ -5,6 +5,7 @@ using System.Threading.Tasks;
 using Gateway.Api.Authentication;
 using Gateway.Application.DTOs;
 using Gateway.Domain.Entities;
+using Gateway.Infrastructure.Security;
 using Gateway.Persistence;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -96,9 +97,15 @@ public class WebhooksController : ControllerBase
         if (merchant == null)
             return NotFound(new { error = "Merchant not found." });
 
-        var destination = string.IsNullOrWhiteSpace(request.DestinationUrl)
-            ? (await _dbContext.Invoices.Where(i => i.MerchantId == merchantId).OrderByDescending(i => i.CreatedAtUtc).Select(i => i.CallbackUrl).FirstOrDefaultAsync(ct) ?? "https://example.com/webhook")
-            : request.DestinationUrl.Trim();
+        var destination = !string.IsNullOrWhiteSpace(request.DestinationUrl)
+            ? request.DestinationUrl.Trim()
+            : merchant.DefaultWebhookUrl;
+
+        // تغییر allowHttpForDev به allowHttp
+        if (string.IsNullOrWhiteSpace(destination) || !SsrfValidator.IsDestinationSafe(destination, allowHttp: false))
+        {
+            return BadRequest(new { error = "A valid HTTPS destination URL is required." });
+        }
 
         var payload = System.Text.Json.JsonSerializer.Serialize(new
         {

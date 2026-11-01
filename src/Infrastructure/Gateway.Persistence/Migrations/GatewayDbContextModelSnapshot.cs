@@ -179,6 +179,9 @@ namespace Gateway.Persistence.Migrations
                     b.Property<DateTime>("CreatedAtUtc")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<string>("DefaultWebhookUrl")
+                        .HasColumnType("text");
+
                     b.Property<string>("EncryptedApiKeySecret")
                         .IsRequired()
                         .HasColumnType("text");

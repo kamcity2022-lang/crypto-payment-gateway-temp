@@ -8,6 +8,7 @@ using Gateway.Application.Contracts;
 using Gateway.Infrastructure.Security;
 using Gateway.Persistence;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 
 namespace Gateway.Infrastructure.Webhooks;
@@ -18,17 +19,20 @@ public class WebhookDispatcher : IWebhookDispatcher
     private readonly HttpClient _httpClient;
     private readonly ISecretProtector _secretProtector;
     private readonly ILogger<WebhookDispatcher> _logger;
+    private readonly bool _allowLoopbackForTesting;
 
     public WebhookDispatcher(
         GatewayDbContext dbContext,
         HttpClient httpClient,
         ISecretProtector secretProtector,
-        ILogger<WebhookDispatcher> logger)
+        ILogger<WebhookDispatcher> logger,
+        IConfiguration? configuration = null)
     {
         _dbContext = dbContext;
         _httpClient = httpClient;
         _secretProtector = secretProtector;
         _logger = logger;
+        _allowLoopbackForTesting = configuration?.GetValue<bool>("Testing:AllowLoopbackWebhooks") ?? false;
     }
 
     public async Task DispatchPendingWebhooksAsync(CancellationToken cancellationToken)
@@ -61,10 +65,8 @@ public class WebhookDispatcher : IWebhookDispatcher
         await _dbContext.SaveChangesAsync(cancellationToken);
         await tx.CommitAsync(cancellationToken);
 
-        // Allow loopback and HTTP when running integration tests or development
-        bool isTestOrDev = true;
-
-        if (!SsrfValidator.IsDestinationSafe(pendingEvent.DestinationUrl, allowHttp: isTestOrDev, allowLoopbackForTesting: isTestOrDev))
+        // Security check: SSRF Validation
+        if (!SsrfValidator.IsDestinationSafe(pendingEvent.DestinationUrl, allowHttp: _allowLoopbackForTesting, allowLoopbackForTesting: _allowLoopbackForTesting))
         {
             _logger.LogWarning("Webhook destination {Url} blocked by SSRF filter for event {EventId}", pendingEvent.DestinationUrl, pendingEvent.Id);
             pendingEvent.RecordFailure("Destination blocked by SSRF validation rules.", maxRetries: 1);
@@ -104,7 +106,7 @@ public class WebhookDispatcher : IWebhookDispatcher
             request.Headers.Add("X-CryptoGateway-Signature", signature);
 
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            cts.CancelAfter(TimeSpan.FromSeconds(10)); // Strict timeout
+            cts.CancelAfter(TimeSpan.FromSeconds(10));
 
             using var response = await _httpClient.SendAsync(request, cts.Token);
 
@@ -119,6 +121,8 @@ public class WebhookDispatcher : IWebhookDispatcher
                 pendingEvent.RecordFailure(errorMsg);
                 _logger.LogWarning("Webhook delivery failed for event {EventId}: {Status}", pendingEvent.Id, response.StatusCode);
             }
+
+            await _dbContext.SaveChangesAsync(cancellationToken);
         }
         catch (Exception ex)
         {

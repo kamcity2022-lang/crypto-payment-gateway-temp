@@ -15,6 +15,16 @@ public class Merchant
 
     private Merchant() { } // Required for ORM
 
+    public string? DefaultWebhookUrl { get; private set; }
+
+    public void SetDefaultWebhookUrl(string webhookUrl)
+    {
+        if (!string.IsNullOrWhiteSpace(webhookUrl))
+        {
+            DefaultWebhookUrl = webhookUrl.Trim();
+        }
+    }
+    
     public Merchant(Guid id, string name, string apiKeyHash, string encryptedApiKeySecret, string encryptedWebhookSecret)
     {
         Id = id == Guid.Empty ? Guid.NewGuid() : id;
