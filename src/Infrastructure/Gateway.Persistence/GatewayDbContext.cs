@@ -16,6 +16,8 @@ public class GatewayDbContext : DbContext
     public DbSet<MerchantNonce> MerchantNonces => Set<MerchantNonce>();
     public DbSet<BlockchainScanCursor> BlockchainScanCursors => Set<BlockchainScanCursor>();
     public DbSet<SweepTask> SweepTasks => Set<SweepTask>();
+    public DbSet<MerchantIdempotencyKey> MerchantIdempotencyKeys => Set<MerchantIdempotencyKey>();
+    
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -80,6 +82,14 @@ public class GatewayDbContext : DbContext
             b.HasKey(s => s.Id);
             b.HasIndex(s => new { s.MerchantId, s.Status });
             b.HasIndex(s => s.DerivedAddressId);
+        });
+        
+        modelBuilder.Entity<MerchantIdempotencyKey>(b =>
+        {
+            b.HasKey(k => k.Id);
+            // Strict composite unique index enforcing merchant idempotency
+            b.HasIndex(k => new { k.MerchantId, k.Key }).IsUnique();
+            b.HasIndex(k => k.ExpiresAtUtc);
         });
     }
 }

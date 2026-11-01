@@ -4,6 +4,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Gateway.Api.Authentication;
 using Gateway.Application.DTOs;
+using Gateway.Domain.Entities;
 using Gateway.Persistence;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -83,6 +84,47 @@ public class WebhooksController : ControllerBase
             EventId = outboxEvent.Id,
             Message = "Webhook redelivery successfully scheduled.",
             ScheduledAtUtc = outboxEvent.NextAttemptAtUtc!.Value
+        });
+    }
+    
+    [HttpPost("test")]
+    public async Task<IActionResult> TriggerTestWebhook([FromBody] TestWebhookRequest request, CancellationToken ct)
+    {
+        var merchantId = (Guid)HttpContext.Items["MerchantId"]!;
+
+        var merchant = await _dbContext.Merchants.FirstOrDefaultAsync(m => m.Id == merchantId, ct);
+        if (merchant == null)
+            return NotFound(new { error = "Merchant not found." });
+
+        var destination = string.IsNullOrWhiteSpace(request.DestinationUrl)
+            ? (await _dbContext.Invoices.Where(i => i.MerchantId == merchantId).OrderByDescending(i => i.CreatedAtUtc).Select(i => i.CallbackUrl).FirstOrDefaultAsync(ct) ?? "https://example.com/webhook")
+            : request.DestinationUrl.Trim();
+
+        var payload = System.Text.Json.JsonSerializer.Serialize(new
+        {
+            @event = "webhook.test",
+            merchantId = merchant.Id,
+            timestamp = DateTime.UtcNow,
+            message = "This is a test webhook notification from Crypto Payment Gateway."
+        });
+
+        var outboxEvent = new OutboxEvent(
+            aggregateId: merchant.Id,
+            eventType: "webhook.test",
+            payload: payload,
+            destinationUrl: destination,
+            secretKey: merchant.EncryptedWebhookSecret
+        );
+
+        _dbContext.OutboxEvents.Add(outboxEvent);
+        await _dbContext.SaveChangesAsync(ct);
+
+        return Ok(new TestWebhookResponse
+        {
+            EventId = outboxEvent.Id,
+            DestinationUrl = outboxEvent.DestinationUrl,
+            Status = "Queued",
+            DispatchedAtUtc = outboxEvent.CreatedAtUtc
         });
     }
 }

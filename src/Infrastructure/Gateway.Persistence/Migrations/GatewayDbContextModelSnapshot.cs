@@ -205,6 +205,46 @@ namespace Gateway.Persistence.Migrations
                     b.ToTable("Merchants");
                 });
 
+            modelBuilder.Entity("Gateway.Domain.Entities.MerchantIdempotencyKey", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("ExpiresAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Key")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<Guid>("MerchantId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("RequestHash")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("ResponsePayload")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<int>("ResponseStatusCode")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ExpiresAtUtc");
+
+                    b.HasIndex("MerchantId", "Key")
+                        .IsUnique();
+
+                    b.ToTable("MerchantIdempotencyKeys");
+                });
+
             modelBuilder.Entity("Gateway.Domain.Entities.MerchantNonce", b =>
                 {
                     b.Property<Guid>("Id")

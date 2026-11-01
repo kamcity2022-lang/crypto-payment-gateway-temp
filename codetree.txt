@@ -6,8 +6,12 @@ Files Structure
 CryptoPaymentGateway.slnx
 src/Core/Gateway.Application/Contracts/ISecretProtector.cs
 src/Core/Gateway.Application/Contracts/ITronScannerService.cs
+src/Core/Gateway.Application/Contracts/ITronSweepService.cs
 src/Core/Gateway.Application/Contracts/IWebhookDispatcher.cs
 src/Core/Gateway.Application/DTOs/CreateInvoiceDto.cs
+src/Core/Gateway.Application/DTOs/RegisterMerchantRequest.cs
+src/Core/Gateway.Application/DTOs/SweepDtos.cs
+src/Core/Gateway.Application/DTOs/WebhookEventDto.cs
 src/Core/Gateway.Application/Gateway.Application.csproj
 src/Core/Gateway.Domain/Entities/BlockchainScanCursor.cs
 src/Core/Gateway.Domain/Entities/DerivedAddress.cs
@@ -16,13 +20,16 @@ src/Core/Gateway.Domain/Entities/Merchant.cs
 src/Core/Gateway.Domain/Entities/MerchantNonce.cs
 src/Core/Gateway.Domain/Entities/OutboxEvent.cs
 src/Core/Gateway.Domain/Entities/PaymentTransfer.cs
+src/Core/Gateway.Domain/Entities/SweepTask.cs
 src/Core/Gateway.Domain/Entities/Wallet.cs
 src/Core/Gateway.Domain/Enums/InvoiceStatus.cs
 src/Core/Gateway.Domain/Enums/PaymentStatus.cs
+src/Core/Gateway.Domain/Enums/SweepStatus.cs
 src/Core/Gateway.Domain/Gateway.Domain.csproj
 src/Infrastructure/Gateway.Blockchain.Tron/Gateway.Blockchain.Tron.csproj
 src/Infrastructure/Gateway.Blockchain.Tron/TronAddressDerivationService.cs
 src/Infrastructure/Gateway.Blockchain.Tron/TronScannerService.cs
+src/Infrastructure/Gateway.Blockchain.Tron/TronSweepService.cs
 src/Infrastructure/Gateway.Infrastructure/Gateway.Infrastructure.csproj
 src/Infrastructure/Gateway.Infrastructure/Security/AesGcmSecretProtector.cs
 src/Infrastructure/Gateway.Infrastructure/Security/SsrfValidator.cs
@@ -31,12 +38,17 @@ src/Infrastructure/Gateway.Persistence/Gateway.Persistence.csproj
 src/Infrastructure/Gateway.Persistence/GatewayDbContext.cs
 src/Infrastructure/Gateway.Persistence/Migrations/20261101170035_Initial_CorePaymentEngine_Hardened.cs
 src/Infrastructure/Gateway.Persistence/Migrations/20261101170035_Initial_CorePaymentEngine_Hardened.Designer.cs
+src/Infrastructure/Gateway.Persistence/Migrations/20261101172903_Add_Commercial_Sweeper_And_Settlement.cs
+src/Infrastructure/Gateway.Persistence/Migrations/20261101172903_Add_Commercial_Sweeper_And_Settlement.Designer.cs
 src/Infrastructure/Gateway.Persistence/Migrations/GatewayDbContextModelSnapshot.cs
 src/Presentation/Gateway.Api/appsettings.Development.json
 src/Presentation/Gateway.Api/appsettings.json
 src/Presentation/Gateway.Api/Authentication/MerchantSignatureFilter.cs
 src/Presentation/Gateway.Api/Controllers/CheckoutController.cs
 src/Presentation/Gateway.Api/Controllers/InvoicesController.cs
+src/Presentation/Gateway.Api/Controllers/MerchantsController.cs
+src/Presentation/Gateway.Api/Controllers/SettlementController.cs
+src/Presentation/Gateway.Api/Controllers/WebhooksController.cs
 src/Presentation/Gateway.Api/Gateway.Api.csproj
 src/Presentation/Gateway.Api/Gateway.Api.http
 src/Presentation/Gateway.Api/Program.cs
@@ -52,8 +64,11 @@ tests/Gateway.Blockchain.Tron.Tests/AdvancedPaymentEngineTests.cs
 tests/Gateway.Blockchain.Tron.Tests/CorePaymentEngineE2ETests.cs
 tests/Gateway.Blockchain.Tron.Tests/Gateway.Blockchain.Tron.Tests.csproj
 tests/Gateway.Blockchain.Tron.Tests/InvoiceStateMachineTests.cs
+tests/Gateway.Blockchain.Tron.Tests/MerchantOnboardingTests.cs
+tests/Gateway.Blockchain.Tron.Tests/SettlementAndSweepTests.cs
 tests/Gateway.Blockchain.Tron.Tests/SsrfProtectionTests.cs
 tests/Gateway.Blockchain.Tron.Tests/TronAddressDerivationTests.cs
+tests/Gateway.Blockchain.Tron.Tests/WebhookManagementTests.cs
 tests/Gateway.Domain.Tests/Gateway.Domain.Tests.csproj
 tests/Gateway.Domain.Tests/UnitTest1.cs
 tests/Gateway.IntegrationTests/Gateway.IntegrationTests.csproj
@@ -186,6 +201,20 @@ public interface ITronScannerService
 }
 
 ================
+File: src/Core/Gateway.Application/Contracts/ITronSweepService.cs
+================
+using System.Threading;
+using System.Threading.Tasks;
+
+namespace Gateway.Application.Contracts;
+
+public interface ITronSweepService
+{
+    Task<string> CreateUnsignedSweepTransactionAsync(string sourceAddress, string destinationAddress, long amountUnits, CancellationToken ct);
+    Task<string> BroadcastSignedTransactionAsync(string signedTxJson, CancellationToken ct);
+}
+
+================
 File: src/Core/Gateway.Application/Contracts/IWebhookDispatcher.cs
 ================
 using System.Threading;
@@ -246,6 +275,146 @@ public class CheckoutStatusDto
     public string Network { get; set; } = "TRON";
     public string Status { get; set; } = string.Empty;
     public long RemainingSeconds { get; set; }
+}
+
+================
+File: src/Core/Gateway.Application/DTOs/RegisterMerchantRequest.cs
+================
+using System.ComponentModel.DataAnnotations;
+
+namespace Gateway.Application.DTOs;
+
+public class RegisterMerchantRequest
+{
+    [Required]
+    [StringLength(100, MinimumLength = 3)]
+    public string Name { get; set; } = string.Empty;
+
+    [Required]
+    public string WebhookUrl { get; set; } = string.Empty;
+
+    [Required]
+    public string TronAccountXPub { get; set; } = string.Empty;
+}
+
+public class RegisterMerchantResponse
+{
+    public Guid MerchantId { get; set; }
+    public string Name { get; set; } = string.Empty;
+    public string ApiKey { get; set; } = string.Empty;
+    public string ApiSecret { get; set; } = string.Empty;
+    public string WebhookSecret { get; set; } = string.Empty;
+    public string TronAccountXPub { get; set; } = string.Empty;
+    public DateTime CreatedAtUtc { get; set; }
+}
+
+public class MerchantProfileDto
+{
+    public Guid MerchantId { get; set; }
+    public string Name { get; set; } = string.Empty;
+    public bool IsActive { get; set; }
+    public DateTime CreatedAtUtc { get; set; }
+    public List<MerchantWalletDto> Wallets { get; set; } = new();
+}
+
+public class MerchantWalletDto
+{
+    public Guid WalletId { get; set; }
+    public string Network { get; set; } = string.Empty;
+    public uint TotalAddressesAllocated { get; set; }
+    public DateTime CreatedAtUtc { get; set; }
+}
+
+================
+File: src/Core/Gateway.Application/DTOs/SweepDtos.cs
+================
+using System;
+using System.ComponentModel.DataAnnotations;
+
+namespace Gateway.Application.DTOs;
+
+public class UpdateSettlementAddressRequest
+{
+    [Required]
+    [RegularExpression("^T[1-9A-HJ-NP-za-km-z]{33}$", ErrorMessage = "Invalid TRON base58 address.")]
+    public string SettlementAddress { get; set; } = string.Empty;
+}
+
+public class SweepCandidateDto
+{
+    public Guid DerivedAddressId { get; set; }
+    public uint AddressIndex { get; set; }
+    public string Address { get; set; } = string.Empty;
+    public decimal BalanceUsdt { get; set; }
+    public long BalanceUnits { get; set; }
+}
+
+public class CreateSweepTaskRequest
+{
+    [Required]
+    public Guid DerivedAddressId { get; set; }
+}
+
+public class SweepTaskDto
+{
+    public Guid SweepTaskId { get; set; }
+    public string SourceAddress { get; set; } = string.Empty;
+    public string DestinationAddress { get; set; } = string.Empty;
+    public decimal AmountUsdt { get; set; }
+    public string Status { get; set; } = string.Empty;
+    public string? SweepTxHash { get; set; }
+    public DateTime CreatedAtUtc { get; set; }
+}
+
+public class PrepareSweepTransactionRequest
+{
+    [Required]
+    public Guid SweepTaskId { get; set; }
+}
+
+public class PrepareSweepTransactionResponse
+{
+    public Guid SweepTaskId { get; set; }
+    public string RawTransactionJson { get; set; } = string.Empty;
+    public string TxHash { get; set; } = string.Empty;
+    public string Message { get; set; } = string.Empty;
+}
+
+public class BroadcastSweepRequest
+{
+    [Required]
+    public Guid SweepTaskId { get; set; }
+
+    [Required]
+    public string SignedTransactionJson { get; set; } = string.Empty;
+}
+
+================
+File: src/Core/Gateway.Application/DTOs/WebhookEventDto.cs
+================
+using System;
+
+namespace Gateway.Application.DTOs;
+
+public class WebhookEventDto
+{
+    public Guid EventId { get; set; }
+    public Guid InvoiceId { get; set; }
+    public string EventType { get; set; } = string.Empty;
+    public string DestinationUrl { get; set; } = string.Empty;
+    public string Payload { get; set; } = string.Empty;
+    public int AttemptCount { get; set; }
+    public bool IsProcessed { get; set; }
+    public string? LastError { get; set; }
+    public DateTime CreatedAtUtc { get; set; }
+    public DateTime? NextAttemptAtUtc { get; set; }
+}
+
+public class RedeliverWebhookResponse
+{
+    public Guid EventId { get; set; }
+    public string Message { get; set; } = string.Empty;
+    public DateTime ScheduledAtUtc { get; set; }
 }
 
 ================
@@ -510,6 +679,7 @@ public class Merchant
     public string ApiKeyHash { get; private set; } = string.Empty;
     public string EncryptedApiKeySecret { get; private set; } = string.Empty;
     public string EncryptedWebhookSecret { get; private set; } = string.Empty;
+    public string? SettlementAddress { get; private set; }
     public DateTime CreatedAtUtc { get; private set; }
     public bool IsActive { get; private set; }
 
@@ -524,6 +694,25 @@ public class Merchant
         EncryptedWebhookSecret = encryptedWebhookSecret;
         CreatedAtUtc = DateTime.UtcNow;
         IsActive = true;
+    }
+
+    public void SetSettlementAddress(string settlementAddress)
+    {
+        if (string.IsNullOrWhiteSpace(settlementAddress))
+            throw new ArgumentException("Settlement address cannot be empty.", nameof(settlementAddress));
+
+        var trimmed = settlementAddress.Trim();
+        if (trimmed.Length != 34 || !trimmed.StartsWith("T", StringComparison.Ordinal))
+            throw new ArgumentException("Invalid TRON settlement address format.", nameof(settlementAddress));
+
+        const string base58Alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+        foreach (var c in trimmed)
+        {
+            if (!base58Alphabet.Contains(c))
+                throw new ArgumentException("Settlement address contains invalid Base58 characters.", nameof(settlementAddress));
+        }
+
+        SettlementAddress = trimmed;
     }
 }
 
@@ -615,6 +804,13 @@ public class OutboxEvent
         NextAttemptAtUtc = null;
         LastError = null;
     }
+    
+    public void ScheduleManualRedelivery()
+    {
+        IsProcessed = false;
+        NextAttemptAtUtc = DateTime.UtcNow;
+        LastError = null;
+    }
 }
 
 ================
@@ -698,6 +894,85 @@ public class PaymentTransfer
 }
 
 ================
+File: src/Core/Gateway.Domain/Entities/SweepTask.cs
+================
+using System;
+using Gateway.Domain.Enums;
+
+namespace Gateway.Domain.Entities;
+
+public class SweepTask
+{
+    public Guid Id { get; private set; }
+    public Guid MerchantId { get; private set; }
+    public Guid DerivedAddressId { get; private set; }
+    public string SourceAddress { get; private set; } = string.Empty;
+    public string DestinationAddress { get; private set; } = string.Empty;
+    public string TokenContractAddress { get; private set; } = string.Empty;
+    public long AmountUnits { get; private set; }
+    public SweepStatus Status { get; private set; }
+    public string? FundingTxHash { get; private set; }
+    public string? SweepTxHash { get; private set; }
+    public string? ErrorMessage { get; private set; }
+    public DateTime CreatedAtUtc { get; private set; }
+    public DateTime? CompletedAtUtc { get; private set; }
+
+    private SweepTask() { }
+
+    public SweepTask(
+        Guid merchantId,
+        Guid derivedAddressId,
+        string sourceAddress,
+        string destinationAddress,
+        string tokenContractAddress,
+        long amountUnits)
+    {
+        if (amountUnits <= 0)
+            throw new ArgumentOutOfRangeException(nameof(amountUnits), "Sweep amount must be greater than zero.");
+
+        Id = Guid.NewGuid();
+        MerchantId = merchantId;
+        DerivedAddressId = derivedAddressId;
+        SourceAddress = sourceAddress;
+        DestinationAddress = destinationAddress;
+        TokenContractAddress = tokenContractAddress;
+        AmountUnits = amountUnits;
+        Status = SweepStatus.PendingEvaluation;
+        CreatedAtUtc = DateTime.UtcNow;
+    }
+
+    public void MarkFundingRequired()
+    {
+        Status = SweepStatus.FundingRequired;
+    }
+
+    public void MarkReadyToSign(string? fundingTxHash = null)
+    {
+        Status = SweepStatus.ReadyToSign;
+        FundingTxHash = fundingTxHash;
+    }
+
+    public void MarkBroadcasting(string sweepTxHash)
+    {
+        Status = SweepStatus.Broadcasting;
+        SweepTxHash = sweepTxHash;
+    }
+
+    public void MarkCompleted()
+    {
+        Status = SweepStatus.Completed;
+        CompletedAtUtc = DateTime.UtcNow;
+        ErrorMessage = null;
+    }
+
+    public void MarkFailed(string error)
+    {
+        Status = SweepStatus.Failed;
+        ErrorMessage = error;
+    }
+}
+
+================
 File: src/Core/Gateway.Domain/Entities/Wallet.cs
 ================
 using System;
@@ -766,6 +1041,21 @@ public enum PaymentStatus
     Confirmed = 3,
     Failed = 4,
     Ignored = 5
+}
+
+================
+File: src/Core/Gateway.Domain/Enums/SweepStatus.cs
+================
+namespace Gateway.Domain.Enums;
+
+public enum SweepStatus
+{
+    PendingEvaluation = 1,
+    FundingRequired = 2,
+    ReadyToSign = 3,
+    Broadcasting = 4,
+    Completed = 5,
+    Failed = 6
 }
 
 ================
@@ -1264,6 +1554,143 @@ public class TronScannerService : ITronScannerService
 }
 
 ================
+File: src/Infrastructure/Gateway.Blockchain.Tron/TronSweepService.cs
+================
+using System;
+using System.Net.Http;
+using System.Text;
+using System.Text.Json;
+using System.Threading;
+using System.Threading.Tasks;
+using Gateway.Application.Contracts;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
+
+namespace Gateway.Blockchain.Tron;
+
+public class TronSweepService : ITronSweepService
+{
+    private readonly HttpClient _httpClient;
+    private readonly ILogger<TronSweepService> _logger;
+    private readonly string _usdtContractAddress;
+
+    public TronSweepService(HttpClient httpClient, IConfiguration configuration, ILogger<TronSweepService> logger)
+    {
+        _httpClient = httpClient;
+        _logger = logger;
+        _usdtContractAddress = configuration["Tron:UsdtContractAddress"] 
+            ?? throw new InvalidOperationException("Configuration 'Tron:UsdtContractAddress' is required.");
+    }
+
+    public async Task<string> CreateUnsignedSweepTransactionAsync(
+        string sourceAddress,
+        string destinationAddress,
+        long amountUnits,
+        CancellationToken ct)
+    {
+        // Parameter encoding for TRC-20 transfer(address _to, uint256 _value)
+        // Function Selector: a9059cbb
+        var cleanDest = destinationAddress.Trim();
+        var destHex = TronAddressToHex(cleanDest);
+        var parameter = destHex.PadLeft(64, '0') + amountUnits.ToString("x").PadLeft(64, '0');
+
+        var payload = new
+        {
+            owner_address = sourceAddress,
+            contract_address = _usdtContractAddress,
+            function_selector = "transfer(address,uint256)",
+            parameter = parameter,
+            fee_limit = 30_000_000L, // 30 TRX max fee limit for energy consumption
+            call_value = 0
+        };
+
+        using var content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
+        using var response = await _httpClient.PostAsync("https://api.trongrid.io/wallet/triggersmartcontract", content, ct);
+
+        if (!response.IsSuccessStatusCode)
+        {
+            var err = await response.Content.ReadAsStringAsync(ct);
+            _logger.LogError("TronGrid trigger contract call failed: {Error}", err);
+            throw new InvalidOperationException($"Failed to trigger smart contract transaction: {response.StatusCode}");
+        }
+
+        var json = await response.Content.ReadAsStringAsync(ct);
+        using var doc = JsonDocument.Parse(json);
+
+        if (!doc.RootElement.TryGetProperty("result", out var resultProp) ||
+            !resultProp.TryGetProperty("result", out var isOk) ||
+            !isOk.GetBoolean())
+        {
+            throw new InvalidOperationException("Smart contract call simulation failed on TRON node.");
+        }
+
+        if (!doc.RootElement.TryGetProperty("transaction", out var txProp))
+        {
+            throw new InvalidOperationException("Node did not return an unsigned transaction payload.");
+        }
+
+        return txProp.GetRawText();
+    }
+
+    public async Task<string> BroadcastSignedTransactionAsync(string signedTxJson, CancellationToken ct)
+    {
+        using var content = new StringContent(signedTxJson, Encoding.UTF8, "application/json");
+        using var response = await _httpClient.PostAsync("https://api.trongrid.io/wallet/broadcasttransaction", content, ct);
+
+        if (!response.IsSuccessStatusCode)
+        {
+            var err = await response.Content.ReadAsStringAsync(ct);
+            _logger.LogError("Transaction broadcast failed: {Error}", err);
+            throw new InvalidOperationException($"Broadcast failed: {response.StatusCode}");
+        }
+
+        var json = await response.Content.ReadAsStringAsync(ct);
+        using var doc = JsonDocument.Parse(json);
+
+        if (doc.RootElement.TryGetProperty("result", out var res) && res.GetBoolean())
+        {
+            return doc.RootElement.GetProperty("txid").GetString() ?? string.Empty;
+        }
+
+        var message = doc.RootElement.TryGetProperty("message", out var msg) ? msg.GetString() : "Unknown broadcast rejection";
+        throw new InvalidOperationException($"Transaction broadcast rejected: {message}");
+    }
+
+    private static string TronAddressToHex(string base58Address)
+    {
+        var bytes = Base58CheckDecode(base58Address);
+        // Skip first byte (0x41) for standard EVM address ABI parameter
+        return Convert.ToHexString(bytes.AsSpan(1)).ToLowerInvariant();
+    }
+
+    private static byte[] Base58CheckDecode(string base58)
+    {
+        const string alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+        var intData = System.Numerics.BigInteger.Zero;
+
+        for (var i = 0; i < base58.Length; i++)
+        {
+            var index = alphabet.IndexOf(base58[i]);
+            if (index < 0) throw new FormatException("Invalid Base58 character.");
+            intData = intData * 58 + index;
+        }
+
+        var bytes = intData.ToByteArray(isUnsigned: true, isBigEndian: true);
+        var leadingZeros = 0;
+        for (var i = 0; i < base58.Length && base58[i] == '1'; i++)
+            leadingZeros++;
+
+        var result = new byte[leadingZeros + bytes.Length];
+        Buffer.BlockCopy(bytes, 0, result, leadingZeros, bytes.Length);
+
+        // Exclude 4-byte checksum at the end
+        var payload = new byte[result.Length - 4];
+        Buffer.BlockCopy(result, 0, payload, 0, payload.Length);
+        return payload;
+    }
+}
+
+================
 File: src/Infrastructure/Gateway.Infrastructure/Gateway.Infrastructure.csproj
 ================
 <Project Sdk="Microsoft.NET.Sdk">
@@ -1566,6 +1993,7 @@ public class GatewayDbContext : DbContext
     public DbSet<OutboxEvent> OutboxEvents => Set<OutboxEvent>();
     public DbSet<MerchantNonce> MerchantNonces => Set<MerchantNonce>();
     public DbSet<BlockchainScanCursor> BlockchainScanCursors => Set<BlockchainScanCursor>();
+    public DbSet<SweepTask> SweepTasks => Set<SweepTask>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -1623,6 +2051,13 @@ public class GatewayDbContext : DbContext
         modelBuilder.Entity<BlockchainScanCursor>(b =>
         {
             b.HasKey(c => new { c.Network, c.Address });
+        });
+        
+        modelBuilder.Entity<SweepTask>(b =>
+        {
+            b.HasKey(s => s.Id);
+            b.HasIndex(s => new { s.MerchantId, s.Status });
+            b.HasIndex(s => s.DerivedAddressId);
         });
     }
 }
@@ -2314,6 +2749,541 @@ namespace Gateway.Persistence.Migrations
 }
 
 ================
+File: src/Infrastructure/Gateway.Persistence/Migrations/20261101172903_Add_Commercial_Sweeper_And_Settlement.cs
+================
+using System;
+using Microsoft.EntityFrameworkCore.Migrations;
+
+#nullable disable
+
+namespace Gateway.Persistence.Migrations
+{
+    /// <inheritdoc />
+    public partial class Add_Commercial_Sweeper_And_Settlement : Migration
+    {
+        /// <inheritdoc />
+        protected override void Up(MigrationBuilder migrationBuilder)
+        {
+            migrationBuilder.AddColumn<string>(
+                name: "SettlementAddress",
+                table: "Merchants",
+                type: "text",
+                nullable: true);
+
+            migrationBuilder.CreateTable(
+                name: "SweepTasks",
+                columns: table => new
+                {
+                    Id = table.Column<Guid>(type: "uuid", nullable: false),
+                    MerchantId = table.Column<Guid>(type: "uuid", nullable: false),
+                    DerivedAddressId = table.Column<Guid>(type: "uuid", nullable: false),
+                    SourceAddress = table.Column<string>(type: "text", nullable: false),
+                    DestinationAddress = table.Column<string>(type: "text", nullable: false),
+                    TokenContractAddress = table.Column<string>(type: "text", nullable: false),
+                    AmountUnits = table.Column<long>(type: "bigint", nullable: false),
+                    Status = table.Column<int>(type: "integer", nullable: false),
+                    FundingTxHash = table.Column<string>(type: "text", nullable: true),
+                    SweepTxHash = table.Column<string>(type: "text", nullable: true),
+                    ErrorMessage = table.Column<string>(type: "text", nullable: true),
+                    CreatedAtUtc = table.Column<DateTime>(type: "timestamp with time zone", nullable: false),
+                    CompletedAtUtc = table.Column<DateTime>(type: "timestamp with time zone", nullable: true)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_SweepTasks", x => x.Id);
+                });
+
+            migrationBuilder.CreateIndex(
+                name: "IX_SweepTasks_DerivedAddressId",
+                table: "SweepTasks",
+                column: "DerivedAddressId");
+
+            migrationBuilder.CreateIndex(
+                name: "IX_SweepTasks_MerchantId_Status",
+                table: "SweepTasks",
+                columns: new[] { "MerchantId", "Status" });
+        }
+
+        /// <inheritdoc />
+        protected override void Down(MigrationBuilder migrationBuilder)
+        {
+            migrationBuilder.DropTable(
+                name: "SweepTasks");
+
+            migrationBuilder.DropColumn(
+                name: "SettlementAddress",
+                table: "Merchants");
+        }
+    }
+}
+
+================
+File: src/Infrastructure/Gateway.Persistence/Migrations/20261101172903_Add_Commercial_Sweeper_And_Settlement.Designer.cs
+================
+// <auto-generated />
+using System;
+using Gateway.Persistence;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
+using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
+using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
+
+#nullable disable
+
+namespace Gateway.Persistence.Migrations
+{
+    [DbContext(typeof(GatewayDbContext))]
+    [Migration("20261101172903_Add_Commercial_Sweeper_And_Settlement")]
+    partial class Add_Commercial_Sweeper_And_Settlement
+    {
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
+        {
+#pragma warning disable 612, 618
+            modelBuilder
+                .HasAnnotation("ProductVersion", "10.0.14")
+                .HasAnnotation("Relational:MaxIdentifierLength", 63);
+
+            NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
+
+            modelBuilder.Entity("Gateway.Domain.Entities.BlockchainScanCursor", b =>
+                {
+                    b.Property<string>("Network")
+                        .HasColumnType("text");
+
+                    b.Property<string>("Address")
+                        .HasColumnType("text");
+
+                    b.Property<string>("LastFingerprint")
+                        .HasColumnType("text");
+
+                    b.Property<decimal>("LastProcessedBlockNumber")
+                        .HasColumnType("numeric(20,0)");
+
+                    b.Property<long>("LastProcessedBlockTimestamp")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTime>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Network", "Address");
+
+                    b.ToTable("BlockchainScanCursors");
+                });
+
+            modelBuilder.Entity("Gateway.Domain.Entities.DerivedAddress", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Address")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<long>("AddressIndex")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<bool>("IsAllocated")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("Network")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<Guid>("WalletId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Network", "Address")
+                        .IsUnique();
+
+                    b.HasIndex("WalletId", "AddressIndex")
+                        .IsUnique();
+
+                    b.ToTable("DerivedAddresses");
+                });
+
+            modelBuilder.Entity("Gateway.Domain.Entities.Invoice", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("CallbackUrl")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("CheckoutToken")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Currency")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("DepositAddress")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<Guid>("DerivedAddressId")
+                        .HasColumnType("uuid");
+
+                    b.Property<decimal>("ExchangeRate")
+                        .HasPrecision(18, 6)
+                        .HasColumnType("numeric(18,6)");
+
+                    b.Property<string>("ExchangeRateSource")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("ExchangeRateTimestampUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<long>("ExpectedAmountUnits")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTime>("ExpiresAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<decimal>("FiatAmount")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<string>("FiatCurrency")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<Guid>("MerchantId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Network")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<long>("PaidAmountUnits")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTime?>("PaidAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("Status")
+                        .HasColumnType("integer");
+
+                    b.Property<long>("UnderpaymentThresholdUnits")
+                        .HasColumnType("bigint");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CheckoutToken")
+                        .IsUnique();
+
+                    b.HasIndex("Status", "ExpiresAtUtc");
+
+                    b.ToTable("Invoices");
+                });
+
+            modelBuilder.Entity("Gateway.Domain.Entities.Merchant", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ApiKeyHash")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("EncryptedApiKeySecret")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("EncryptedWebhookSecret")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("SettlementAddress")
+                        .HasColumnType("text");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ApiKeyHash")
+                        .IsUnique();
+
+                    b.ToTable("Merchants");
+                });
+
+            modelBuilder.Entity("Gateway.Domain.Entities.MerchantNonce", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("ExpiresAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("MerchantId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Nonce")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ExpiresAtUtc");
+
+                    b.HasIndex("MerchantId", "Nonce")
+                        .IsUnique();
+
+                    b.ToTable("MerchantNonces");
+                });
+
+            modelBuilder.Entity("Gateway.Domain.Entities.OutboxEvent", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("AggregateId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("AttemptCount")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("DestinationUrl")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("EventType")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<bool>("IsProcessed")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("LastError")
+                        .HasColumnType("text");
+
+                    b.Property<DateTime?>("NextAttemptAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Payload")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("SecretKey")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("IsProcessed", "NextAttemptAtUtc");
+
+                    b.ToTable("OutboxEvents");
+                });
+
+            modelBuilder.Entity("Gateway.Domain.Entities.PaymentTransfer", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<long>("AmountUnits")
+                        .HasColumnType("bigint");
+
+                    b.Property<decimal>("BlockNumber")
+                        .HasColumnType("numeric(20,0)");
+
+                    b.Property<decimal>("Confirmations")
+                        .HasColumnType("numeric(20,0)");
+
+                    b.Property<DateTime?>("ConfirmedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("FromAddress")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<Guid>("InvoiceId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Network")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("ObservedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("Status")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("ToAddress")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("TokenContractAddress")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("TransactionHash")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<int>("TransferIndex")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("InvoiceId");
+
+                    b.HasIndex("Network", "TransactionHash", "TransferIndex")
+                        .IsUnique();
+
+                    b.ToTable("PaymentTransfers");
+                });
+
+            modelBuilder.Entity("Gateway.Domain.Entities.SweepTask", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<long>("AmountUnits")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTime?>("CompletedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("DerivedAddressId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("DestinationAddress")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("ErrorMessage")
+                        .HasColumnType("text");
+
+                    b.Property<string>("FundingTxHash")
+                        .HasColumnType("text");
+
+                    b.Property<Guid>("MerchantId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("SourceAddress")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<int>("Status")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("SweepTxHash")
+                        .HasColumnType("text");
+
+                    b.Property<string>("TokenContractAddress")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("DerivedAddressId");
+
+                    b.HasIndex("MerchantId", "Status");
+
+                    b.ToTable("SweepTasks");
+                });
+
+            modelBuilder.Entity("Gateway.Domain.Entities.Wallet", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("AccountXPub")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<long>("LastDerivationIndex")
+                        .HasColumnType("bigint");
+
+                    b.Property<Guid>("MerchantId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Network")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("MerchantId", "Network")
+                        .IsUnique();
+
+                    b.ToTable("Wallets");
+                });
+
+            modelBuilder.Entity("Gateway.Domain.Entities.DerivedAddress", b =>
+                {
+                    b.HasOne("Gateway.Domain.Entities.Wallet", null)
+                        .WithMany("DerivedAddresses")
+                        .HasForeignKey("WalletId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Gateway.Domain.Entities.PaymentTransfer", b =>
+                {
+                    b.HasOne("Gateway.Domain.Entities.Invoice", null)
+                        .WithMany("Transfers")
+                        .HasForeignKey("InvoiceId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Gateway.Domain.Entities.Invoice", b =>
+                {
+                    b.Navigation("Transfers");
+                });
+
+            modelBuilder.Entity("Gateway.Domain.Entities.Wallet", b =>
+                {
+                    b.Navigation("DerivedAddresses");
+                });
+#pragma warning restore 612, 618
+        }
+    }
+}
+
+================
 File: src/Infrastructure/Gateway.Persistence/Migrations/GatewayDbContextModelSnapshot.cs
 ================
 // <auto-generated />
@@ -2512,6 +3482,9 @@ namespace Gateway.Persistence.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
+                    b.Property<string>("SettlementAddress")
+                        .HasColumnType("text");
+
                     b.HasKey("Id");
 
                     b.HasIndex("ApiKeyHash")
@@ -2654,6 +3627,60 @@ namespace Gateway.Persistence.Migrations
                         .IsUnique();
 
                     b.ToTable("PaymentTransfers");
+                });
+
+            modelBuilder.Entity("Gateway.Domain.Entities.SweepTask", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<long>("AmountUnits")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTime?>("CompletedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("DerivedAddressId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("DestinationAddress")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("ErrorMessage")
+                        .HasColumnType("text");
+
+                    b.Property<string>("FundingTxHash")
+                        .HasColumnType("text");
+
+                    b.Property<Guid>("MerchantId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("SourceAddress")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<int>("Status")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("SweepTxHash")
+                        .HasColumnType("text");
+
+                    b.Property<string>("TokenContractAddress")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("DerivedAddressId");
+
+                    b.HasIndex("MerchantId", "Status");
+
+                    b.ToTable("SweepTasks");
                 });
 
             modelBuilder.Entity("Gateway.Domain.Entities.Wallet", b =>
@@ -3056,6 +4083,469 @@ public class InvoicesController : ControllerBase
 }
 
 ================
+File: src/Presentation/Gateway.Api/Controllers/MerchantsController.cs
+================
+using System;
+using System.Linq;
+using System.Security.Cryptography;
+using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
+using Gateway.Api.Authentication;
+using Gateway.Application.Contracts;
+using Gateway.Application.DTOs;
+using Gateway.Blockchain.Tron;
+using Gateway.Domain.Entities;
+using Gateway.Infrastructure.Security;
+using Gateway.Persistence;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
+
+namespace Gateway.Api.Controllers;
+
+[ApiController]
+[Route("api/v1/merchants")]
+public class MerchantsController : ControllerBase
+{
+    private readonly GatewayDbContext _dbContext;
+    private readonly ISecretProtector _secretProtector;
+
+    public MerchantsController(GatewayDbContext dbContext, ISecretProtector secretProtector)
+    {
+        _dbContext = dbContext;
+        _secretProtector = secretProtector;
+    }
+
+    [HttpPost("register")]
+    public async Task<IActionResult> RegisterMerchant([FromBody] RegisterMerchantRequest request, CancellationToken ct)
+    {
+        if (!SsrfValidator.IsDestinationSafe(request.WebhookUrl))
+        {
+            return BadRequest(new { error = "WebhookUrl is rejected by security validation rules." });
+        }
+
+        // Validate that TronAccountXPub is structurally valid by testing address derivation at index 0
+        try
+        {
+            var derivationService = new TronAddressDerivationService(request.TronAccountXPub);
+            var testAddress = derivationService.DeriveAddress(0);
+            if (!testAddress.StartsWith("T", StringComparison.Ordinal) || testAddress.Length != 34)
+            {
+                return BadRequest(new { error = "Invalid TronAccountXPub: Derived address does not match standard TRON specifications." });
+            }
+        }
+        catch (Exception ex)
+        {
+            return BadRequest(new { error = $"Invalid TronAccountXPub format: {ex.Message}" });
+        }
+
+        // Generate cryptographically secure API credentials
+        var rawApiKey = $"cpg_live_{Convert.ToHexString(RandomNumberGenerator.GetBytes(16)).ToLowerInvariant()}";
+        var rawApiSecret = Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
+        var rawWebhookSecret = Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
+
+        using var sha = SHA256.Create();
+        var apiKeyHash = Convert.ToHexString(sha.ComputeHash(Encoding.UTF8.GetBytes(rawApiKey))).ToLowerInvariant();
+
+        var encryptedApiSecret = _secretProtector.Encrypt(rawApiSecret);
+        var encryptedWebhookSecret = _secretProtector.Encrypt(rawWebhookSecret);
+
+        var merchant = new Merchant(
+            id: Guid.NewGuid(),
+            name: request.Name.Trim(),
+            apiKeyHash: apiKeyHash,
+            encryptedApiKeySecret: encryptedApiSecret,
+            encryptedWebhookSecret: encryptedWebhookSecret
+        );
+
+        var wallet = new Wallet(
+            merchantId: merchant.Id,
+            accountXPub: request.TronAccountXPub.Trim(),
+            network: "TRON"
+        );
+
+        _dbContext.Merchants.Add(merchant);
+        _dbContext.Wallets.Add(wallet);
+
+        await _dbContext.SaveChangesAsync(ct);
+
+        return CreatedAtAction(nameof(GetProfile), new { }, new RegisterMerchantResponse
+        {
+            MerchantId = merchant.Id,
+            Name = merchant.Name,
+            ApiKey = rawApiKey,
+            ApiSecret = rawApiSecret,
+            WebhookSecret = rawWebhookSecret,
+            TronAccountXPub = wallet.AccountXPub,
+            CreatedAtUtc = merchant.CreatedAtUtc
+        });
+    }
+
+    [HttpGet("me")]
+    [RequireMerchantSignature]
+    public async Task<IActionResult> GetProfile(CancellationToken ct)
+    {
+        var merchantId = (Guid)HttpContext.Items["MerchantId"]!;
+
+        var merchant = await _dbContext.Merchants
+            .AsNoTracking()
+            .FirstOrDefaultAsync(m => m.Id == merchantId, ct);
+
+        if (merchant == null)
+            return NotFound(new { error = "Merchant profile not found." });
+
+        var wallets = await _dbContext.Wallets
+            .AsNoTracking()
+            .Where(w => w.MerchantId == merchantId)
+            .Select(w => new MerchantWalletDto
+            {
+                WalletId = w.Id,
+                Network = w.Network,
+                TotalAddressesAllocated = w.LastDerivationIndex,
+                CreatedAtUtc = w.CreatedAtUtc
+            })
+            .ToListAsync(ct);
+
+        return Ok(new MerchantProfileDto
+        {
+            MerchantId = merchant.Id,
+            Name = merchant.Name,
+            IsActive = merchant.IsActive,
+            CreatedAtUtc = merchant.CreatedAtUtc,
+            Wallets = wallets
+        });
+    }
+}
+
+================
+File: src/Presentation/Gateway.Api/Controllers/SettlementController.cs
+================
+using System;
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
+using Gateway.Api.Authentication;
+using Gateway.Application.Contracts;
+using Gateway.Application.DTOs;
+using Gateway.Domain.Entities;
+using Gateway.Domain.Enums;
+using Gateway.Persistence;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
+
+namespace Gateway.Api.Controllers;
+
+[ApiController]
+[Route("api/v1/settlement")]
+[RequireMerchantSignature]
+public class SettlementController : ControllerBase
+{
+    private readonly GatewayDbContext _dbContext;
+    private readonly ITronSweepService _tronSweepService;
+    private readonly string _usdtContractAddress;
+
+    public SettlementController(GatewayDbContext dbContext, IConfiguration configuration, ITronSweepService  tronSweepService)
+    {
+        _dbContext = dbContext;
+        _tronSweepService = tronSweepService;
+        _usdtContractAddress = configuration["Tron:UsdtContractAddress"] ?? "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t";
+    }
+
+    [HttpPost("address")]
+    public async Task<IActionResult> SetSettlementAddress([FromBody] UpdateSettlementAddressRequest request, CancellationToken ct)
+    {
+        var merchantId = (Guid)HttpContext.Items["MerchantId"]!;
+
+        var merchant = await _dbContext.Merchants.FirstOrDefaultAsync(m => m.Id == merchantId, ct);
+        if (merchant == null)
+            return NotFound(new { error = "Merchant not found." });
+
+        try
+        {
+            merchant.SetSettlementAddress(request.SettlementAddress);
+            await _dbContext.SaveChangesAsync(ct);
+            return Ok(new { message = "Settlement address updated successfully.", settlementAddress = merchant.SettlementAddress });
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { error = ex.Message });
+        }
+    }
+
+    [HttpGet("candidates")]
+    public async Task<IActionResult> GetSweepCandidates(CancellationToken ct)
+    {
+        var merchantId = (Guid)HttpContext.Items["MerchantId"]!;
+
+        // Find derived addresses belonging to this merchant that have confirmed payments
+        var candidates = await _dbContext.Invoices
+            .AsNoTracking()
+            .Where(i => i.MerchantId == merchantId && (i.Status == InvoiceStatus.Paid || i.Status == InvoiceStatus.Overpaid))
+            .Join(_dbContext.DerivedAddresses,
+                  inv => inv.DerivedAddressId,
+                  addr => addr.Id,
+                  (inv, addr) => new
+                  {
+                      addr.Id,
+                      addr.AddressIndex,
+                      addr.Address,
+                      inv.PaidAmountUnits
+                  })
+            .GroupBy(x => new { x.Id, x.AddressIndex, x.Address })
+            .Select(g => new SweepCandidateDto
+            {
+                DerivedAddressId = g.Key.Id,
+                AddressIndex = (uint)g.Key.AddressIndex,
+                Address = g.Key.Address,
+                BalanceUnits = g.Sum(x => x.PaidAmountUnits),
+                BalanceUsdt = g.Sum(x => x.PaidAmountUnits) / 1_000_000m
+            })
+            .Where(c => c.BalanceUnits > 0)
+            .ToListAsync(ct);
+
+        return Ok(candidates);
+    }
+
+    [HttpPost("tasks")]
+    public async Task<IActionResult> CreateSweepTask([FromBody] CreateSweepTaskRequest request, CancellationToken ct)
+    {
+        var merchantId = (Guid)HttpContext.Items["MerchantId"]!;
+
+        var merchant = await _dbContext.Merchants.FirstOrDefaultAsync(m => m.Id == merchantId, ct);
+        if (merchant == null || string.IsNullOrEmpty(merchant.SettlementAddress))
+        {
+            return BadRequest(new { error = "Settlement address must be configured before creating sweep tasks." });
+        }
+
+        var derivedAddress = await _dbContext.DerivedAddresses
+            .Join(_dbContext.Wallets,
+                  da => da.WalletId,
+                  w => w.Id,
+                  (da, w) => new { da, w.MerchantId })
+            .Where(x => x.MerchantId == merchantId && x.da.Id == request.DerivedAddressId)
+            .Select(x => x.da)
+            .FirstOrDefaultAsync(ct);
+
+        if (derivedAddress == null)
+            return NotFound(new { error = "Derived address not found or does not belong to this merchant." });
+
+        // Calculate confirmed balance
+        var totalConfirmedUnits = await _dbContext.Invoices
+            .Where(i => i.DerivedAddressId == derivedAddress.Id && (i.Status == InvoiceStatus.Paid || i.Status == InvoiceStatus.Overpaid))
+            .SumAsync(i => i.PaidAmountUnits, ct);
+
+        if (totalConfirmedUnits <= 0)
+            return BadRequest(new { error = "No confirmed funds available to sweep for this address." });
+
+        // Check if there is an active sweep task in progress
+        var activeTaskExists = await _dbContext.SweepTasks
+            .AnyAsync(s => s.DerivedAddressId == derivedAddress.Id && 
+                          (s.Status == SweepStatus.PendingEvaluation || 
+                           s.Status == SweepStatus.FundingRequired || 
+                           s.Status == SweepStatus.ReadyToSign ||
+                           s.Status == SweepStatus.Broadcasting), ct);
+
+        if (activeTaskExists)
+            return Conflict(new { error = "A sweep operation is already in progress for this address." });
+
+        var sweepTask = new SweepTask(
+            merchantId,
+            derivedAddress.Id,
+            derivedAddress.Address,
+            merchant.SettlementAddress,
+            _usdtContractAddress,
+            totalConfirmedUnits
+        );
+
+        _dbContext.SweepTasks.Add(sweepTask);
+        await _dbContext.SaveChangesAsync(ct);
+
+        return Ok(new SweepTaskDto
+        {
+            SweepTaskId = sweepTask.Id,
+            SourceAddress = sweepTask.SourceAddress,
+            DestinationAddress = sweepTask.DestinationAddress,
+            AmountUsdt = sweepTask.AmountUnits / 1_000_000m,
+            Status = sweepTask.Status.ToString(),
+            CreatedAtUtc = sweepTask.CreatedAtUtc
+        });
+    }
+    
+    [HttpPost("tasks/prepare")]
+    public async Task<IActionResult> PrepareSweepTransaction(
+        [FromBody] PrepareSweepTransactionRequest request,
+        [FromServices] ITronSweepService sweepService,
+        CancellationToken ct)
+    {
+        var merchantId = (Guid)HttpContext.Items["MerchantId"]!;
+
+        var task = await _dbContext.SweepTasks
+            .FirstOrDefaultAsync(t => t.Id == request.SweepTaskId && t.MerchantId == merchantId, ct);
+
+        if (task == null)
+            return NotFound(new { error = "Sweep task not found." });
+
+        if (task.Status != SweepStatus.PendingEvaluation && task.Status != SweepStatus.ReadyToSign)
+            return BadRequest(new { error = $"Cannot prepare transaction in status {task.Status}." });
+
+        try
+        {
+            var rawTx = await sweepService.CreateUnsignedSweepTransactionAsync(
+                task.SourceAddress,
+                task.DestinationAddress,
+                task.AmountUnits,
+                ct);
+
+            task.MarkReadyToSign();
+            await _dbContext.SaveChangesAsync(ct);
+
+            using var doc = System.Text.Json.JsonDocument.Parse(rawTx);
+            var txHash = doc.RootElement.GetProperty("txID").GetString() ?? string.Empty;
+
+            return Ok(new PrepareSweepTransactionResponse
+            {
+                SweepTaskId = task.Id,
+                RawTransactionJson = rawTx,
+                TxHash = txHash,
+                Message = "Unsigned transaction generated. Sign this payload with the merchant's key/signer and broadcast."
+            });
+        }
+        catch (Exception ex)
+        {
+            task.MarkFailed(ex.Message);
+            await _dbContext.SaveChangesAsync(ct);
+            return BadRequest(new { error = ex.Message });
+        }
+    }
+
+    [HttpPost("tasks/broadcast")]
+    public async Task<IActionResult> BroadcastSweep(
+        [FromBody] BroadcastSweepRequest request,
+        [FromServices] ITronSweepService sweepService,
+        CancellationToken ct)
+    {
+        var merchantId = (Guid)HttpContext.Items["MerchantId"]!;
+
+        var task = await _dbContext.SweepTasks
+            .FirstOrDefaultAsync(t => t.Id == request.SweepTaskId && t.MerchantId == merchantId, ct);
+
+        if (task == null)
+            return NotFound(new { error = "Sweep task not found." });
+
+        if (task.Status != SweepStatus.ReadyToSign)
+            return BadRequest(new { error = $"Task is not in 'ReadyToSign' status. Current: {task.Status}" });
+
+        try
+        {
+            var txId = await sweepService.BroadcastSignedTransactionAsync(request.SignedTransactionJson, ct);
+            task.MarkBroadcasting(txId);
+            await _dbContext.SaveChangesAsync(ct);
+
+            return Ok(new { message = "Transaction broadcasted successfully.", txId = txId });
+        }
+        catch (Exception ex)
+        {
+            task.MarkFailed(ex.Message);
+            await _dbContext.SaveChangesAsync(ct);
+            return BadRequest(new { error = ex.Message });
+        }
+    }
+}
+
+================
+File: src/Presentation/Gateway.Api/Controllers/WebhooksController.cs
+================
+using System;
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
+using Gateway.Api.Authentication;
+using Gateway.Application.DTOs;
+using Gateway.Persistence;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
+
+namespace Gateway.Api.Controllers;
+
+[ApiController]
+[Route("api/v1/webhooks")]
+[RequireMerchantSignature]
+public class WebhooksController : ControllerBase
+{
+    private readonly GatewayDbContext _dbContext;
+
+    public WebhooksController(GatewayDbContext dbContext)
+    {
+        _dbContext = dbContext;
+    }
+
+    [HttpGet("invoices/{invoiceId:guid}")]
+    public async Task<IActionResult> GetInvoiceWebhooks(Guid invoiceId, CancellationToken ct)
+    {
+        var merchantId = (Guid)HttpContext.Items["MerchantId"]!;
+
+        // تایید تعلق فاکتور به مرچنت درخواست‌دهنده
+        var invoiceBelongsToMerchant = await _dbContext.Invoices
+            .AnyAsync(i => i.Id == invoiceId && i.MerchantId == merchantId, ct);
+
+        if (!invoiceBelongsToMerchant)
+            return NotFound(new { error = "Invoice not found or unauthorized access." });
+
+        var events = await _dbContext.OutboxEvents
+            .AsNoTracking()
+            .Where(e => e.AggregateId == invoiceId)
+            .OrderByDescending(e => e.CreatedAtUtc)
+            .Select(e => new WebhookEventDto
+            {
+                EventId = e.Id,
+                InvoiceId = e.AggregateId,
+                EventType = e.EventType,
+                DestinationUrl = e.DestinationUrl,
+                Payload = e.Payload,
+                AttemptCount = e.AttemptCount,
+                IsProcessed = e.IsProcessed,
+                LastError = e.LastError,
+                CreatedAtUtc = e.CreatedAtUtc,
+                NextAttemptAtUtc = e.NextAttemptAtUtc
+            })
+            .ToListAsync(ct);
+
+        return Ok(events);
+    }
+
+    [HttpPost("events/{eventId:guid}/redeliver")]
+    public async Task<IActionResult> RedeliverEvent(Guid eventId, CancellationToken ct)
+    {
+        var merchantId = (Guid)HttpContext.Items["MerchantId"]!;
+
+        var outboxEvent = await _dbContext.OutboxEvents
+            .FirstOrDefaultAsync(e => e.Id == eventId, ct);
+
+        if (outboxEvent == null)
+            return NotFound(new { error = "Webhook event not found." });
+
+        // تایید دسترسی مرچنت بر پایه فاکتور مربوطه
+        var invoiceBelongsToMerchant = await _dbContext.Invoices
+            .AnyAsync(i => i.Id == outboxEvent.AggregateId && i.MerchantId == merchantId, ct);
+
+        if (!invoiceBelongsToMerchant)
+            return Unauthorized(new { error = "You do not have permission to redeliver this event." });
+
+        // بازنشانی وضعیت تلاش برای مخابره فوری توسط Worker
+        outboxEvent.ScheduleManualRedelivery();
+        await _dbContext.SaveChangesAsync(ct);
+
+        return Ok(new RedeliverWebhookResponse
+        {
+            EventId = outboxEvent.Id,
+            Message = "Webhook redelivery successfully scheduled.",
+            ScheduledAtUtc = outboxEvent.NextAttemptAtUtc!.Value
+        });
+    }
+}
+
+================
 File: src/Presentation/Gateway.Api/Gateway.Api.csproj
 ================
 <Project Sdk="Microsoft.NET.Sdk.Web">
@@ -3098,6 +4588,7 @@ Accept: application/json
 File: src/Presentation/Gateway.Api/Program.cs
 ================
 using Gateway.Application.Contracts;
+using Gateway.Blockchain.Tron;
 using Gateway.Infrastructure.Security;
 using Gateway.Persistence;
 using Microsoft.EntityFrameworkCore;
@@ -3140,6 +4631,8 @@ builder.Services.AddHealthChecks()
             return HealthCheckResult.Unhealthy(ex.Message);
         }
     });
+
+builder.Services.AddHttpClient<ITronSweepService, TronSweepService>();
 
 var app = builder.Build();
 
@@ -3803,6 +5296,114 @@ public class InvoiceStateMachineTests
 }
 
 ================
+File: tests/Gateway.Blockchain.Tron.Tests/MerchantOnboardingTests.cs
+================
+using System;
+using FluentAssertions;
+using Gateway.Blockchain.Tron;
+using NBitcoin;
+using Xunit;
+
+namespace Gateway.Domain.Tests;
+
+public class MerchantOnboardingTests
+{
+    private static string GenerateTestXPub()
+    {
+        var mnemonic = new Mnemonic("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about");
+        var masterKey = mnemonic.DeriveExtKey();
+        var accountKey = masterKey.Derive(new KeyPath("m/44'/195'/0'"));
+        return accountKey.Neuter().ToString(Network.Main);
+    }
+
+    [Fact]
+    public void ValidXPub_ShouldSuccessfullyDerive_TronAddress()
+    {
+        var xpub = GenerateTestXPub();
+        var service = new TronAddressDerivationService(xpub);
+        var address = service.DeriveAddress(0);
+
+        address.Should().StartWith("T");
+        address.Length.Should().Be(34);
+    }
+
+    [Fact]
+    public void InvalidXPub_ShouldThrowFormatException()
+    {
+        var action = () => new TronAddressDerivationService("invalid-xpub-format");
+        action.Should().Throw<FormatException>();
+    }
+}
+
+================
+File: tests/Gateway.Blockchain.Tron.Tests/SettlementAndSweepTests.cs
+================
+using System;
+using FluentAssertions;
+using Gateway.Domain.Entities;
+using Gateway.Domain.Enums;
+using Xunit;
+
+namespace Gateway.Domain.Tests;
+
+public class SettlementAndSweepTests
+{
+    [Fact]
+    public void SetSettlementAddress_ValidTronAddress_ShouldUpdateSuccessfully()
+    {
+        var merchant = new Merchant(Guid.NewGuid(), "Store", "hash", "sec", "whsec");
+        // یک آدرس ۳۴ کاراکتری استاندارد شبکه ترون با Base58 کاملاً معتبر
+        var validTronAddress = "TNDzfKLv2DuYxK29iugQyLf3jGg8F7m5p2";
+
+        merchant.SetSettlementAddress(validTronAddress);
+
+        merchant.SettlementAddress.Should().Be(validTronAddress);
+    }
+
+    [Theory]
+    [InlineData("0x1234567890abcdef1234567890abcdef12345678")] // EVM address
+    [InlineData("TShortAddress")]
+    [InlineData("")]
+    public void SetSettlementAddress_InvalidAddress_ShouldThrowArgumentException(string invalidAddress)
+    {
+        var merchant = new Merchant(Guid.NewGuid(), "Store", "hash", "sec", "whsec");
+
+        var act = () => merchant.SetSettlementAddress(invalidAddress);
+
+        act.Should().Throw<ArgumentException>();
+    }
+
+    [Fact]
+    public void SweepTask_LifecycleTransitions_ShouldWorkCorrectly()
+    {
+        var sweepTask = new SweepTask(
+            Guid.NewGuid(),
+            Guid.NewGuid(),
+            "TSourceAddress1234567890qwertyuiop",
+            "TDestinationAddress1234567890qwerty",
+            "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t",
+            50_000_000L);
+
+        sweepTask.Status.Should().Be(SweepStatus.PendingEvaluation);
+
+        sweepTask.MarkFundingRequired();
+        sweepTask.Status.Should().Be(SweepStatus.FundingRequired);
+
+        sweepTask.MarkReadyToSign("fundingTx123");
+        sweepTask.Status.Should().Be(SweepStatus.ReadyToSign);
+        sweepTask.FundingTxHash.Should().Be("fundingTx123");
+
+        sweepTask.MarkBroadcasting("sweepTx999");
+        sweepTask.Status.Should().Be(SweepStatus.Broadcasting);
+        sweepTask.SweepTxHash.Should().Be("sweepTx999");
+
+        sweepTask.MarkCompleted();
+        sweepTask.Status.Should().Be(SweepStatus.Completed);
+        sweepTask.CompletedAtUtc.Should().NotBeNull();
+    }
+}
+
+================
 File: tests/Gateway.Blockchain.Tron.Tests/SsrfProtectionTests.cs
 ================
 using System.Net;
@@ -3882,6 +5483,45 @@ public class TronAddressDerivationTests
         {
             service1.DeriveAddress(i).Should().Be(service2.DeriveAddress(i));
         }
+    }
+}
+
+================
+File: tests/Gateway.Blockchain.Tron.Tests/WebhookManagementTests.cs
+================
+using System;
+using FluentAssertions;
+using Gateway.Domain.Entities;
+using Xunit;
+
+namespace Gateway.Domain.Tests;
+
+public class WebhookManagementTests
+{
+    [Fact]
+    public void ScheduleManualRedelivery_ShouldResetProcessedStateAndScheduleImmediately()
+    {
+        var invoiceId = Guid.NewGuid();
+        var outboxEvent = new OutboxEvent(
+            aggregateId: invoiceId,
+            eventType: "invoice.paid",
+            payload: "{}",
+            destinationUrl: "https://merchant.com/webhook",
+            secretKey: "enc-key"
+        );
+
+        // شبیه‌سازی وضعیت شکست در حداکثر تلاش‌ها
+        outboxEvent.RecordFailure("Destination unreachable", maxRetries: 1);
+        outboxEvent.NextAttemptAtUtc.Should().BeNull();
+        outboxEvent.LastError.Should().NotBeNull();
+
+        // اجرای درخواست ارسال مجدد دستی
+        outboxEvent.ScheduleManualRedelivery();
+
+        outboxEvent.IsProcessed.Should().BeFalse();
+        outboxEvent.NextAttemptAtUtc.Should().NotBeNull();
+        outboxEvent.NextAttemptAtUtc.Should().BeOnOrBefore(DateTime.UtcNow.AddSeconds(1));
+        outboxEvent.LastError.Should().BeNull();
     }
 }
 
