@@ -22,6 +22,5 @@
   </ImportGroup>
   <PropertyGroup Condition=" '$(ExcludeRestorePackageImports)' != 'true' ">
     <Pkgxunit_analyzers Condition=" '$(Pkgxunit_analyzers)' == '' ">C:\Users\Hadi\.nuget\packages\xunit.analyzers\1.18.0</Pkgxunit_analyzers>
-    <PkgGoogle_Protobuf_Tools Condition=" '$(PkgGoogle_Protobuf_Tools)' == '' ">C:\Users\Hadi\.nuget\packages\google.protobuf.tools\3.11.2</PkgGoogle_Protobuf_Tools>
   </PropertyGroup>
 </Project>

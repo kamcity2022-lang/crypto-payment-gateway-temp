@@ -13,7 +13,4 @@
     <SourceRoot Include="C:\Users\Hadi\.nuget\packages\" />
     <SourceRoot Include="C:\Program Files (x86)\Microsoft Visual Studio\Shared\NuGetPackages\" />
   </ItemGroup>
-  <PropertyGroup Condition=" '$(ExcludeRestorePackageImports)' != 'true' ">
-    <PkgGoogle_Protobuf_Tools Condition=" '$(PkgGoogle_Protobuf_Tools)' == '' ">C:\Users\Hadi\.nuget\packages\google.protobuf.tools\3.11.2</PkgGoogle_Protobuf_Tools>
-  </PropertyGroup>
 </Project>

@@ -20,14 +20,6 @@
           "Gateway.Api.dll": {}
         }
       },
-      "BouncyCastle.Cryptography/2.7.0": {
-        "runtime": {
-          "lib/net6.0/BouncyCastle.Cryptography.dll": {
-            "assemblyVersion": "2.0.0.0",
-            "fileVersion": "2.7.0.16391"
-          }
-        }
-      },
       "FluentValidation/12.2.0": {
         "runtime": {
           "lib/net8.0/FluentValidation.dll": {
@@ -44,114 +36,6 @@
           "lib/net8.0/FluentValidation.DependencyInjectionExtensions.dll": {
             "assemblyVersion": "12.0.0.0",
             "fileVersion": "12.2.0.0"
-          }
-        }
-      },
-      "Google.Api.CommonProtos/1.7.0": {
-        "dependencies": {
-          "Google.Protobuf": "3.13.0"
-        },
-        "runtime": {
-          "lib/netstandard2.0/Google.Api.CommonProtos.dll": {
-            "assemblyVersion": "1.7.0.0",
-            "fileVersion": "1.7.0.0"
-          }
-        }
-      },
-      "Google.Protobuf/3.13.0": {
-        "runtime": {
-          "lib/netstandard2.0/Google.Protobuf.dll": {
-            "assemblyVersion": "3.13.0.0",
-            "fileVersion": "3.13.0.0"
-          }
-        }
-      },
-      "Grpc/2.26.0": {
-        "dependencies": {
-          "Grpc.Core": "2.26.0"
-        }
-      },
-      "Grpc.Core/2.26.0": {
-        "dependencies": {
-          "Grpc.Core.Api": "2.32.0"
-        },
-        "runtime": {
-          "lib/netstandard2.0/Grpc.Core.dll": {
-            "assemblyVersion": "2.0.0.0",
-            "fileVersion": "2.26.0.0"
-          }
-        },
-        "runtimeTargets": {
-          "runtimes/linux/native/libgrpc_csharp_ext.x64.so": {
-            "rid": "linux",
-            "assetType": "native",
-            "fileVersion": "0.0.0.0"
-          },
-          "runtimes/linux/native/libgrpc_csharp_ext.x86.so": {
-            "rid": "linux",
-            "assetType": "native",
-            "fileVersion": "0.0.0.0"
-          },
-          "runtimes/osx/native/libgrpc_csharp_ext.x64.dylib": {
-            "rid": "osx",
-            "assetType": "native",
-            "fileVersion": "0.0.0.0"
-          },
-          "runtimes/osx/native/libgrpc_csharp_ext.x86.dylib": {
-            "rid": "osx",
-            "assetType": "native",
-            "fileVersion": "0.0.0.0"
-          },
-          "runtimes/win/native/grpc_csharp_ext.x64.dll": {
-            "rid": "win",
-            "assetType": "native",
-            "fileVersion": "0.0.0.0"
-          },
-          "runtimes/win/native/grpc_csharp_ext.x86.dll": {
-            "rid": "win",
-            "assetType": "native",
-            "fileVersion": "0.0.0.0"
-          }
-        }
-      },
-      "Grpc.Core.Api/2.32.0": {
-        "runtime": {
-          "lib/netstandard2.0/Grpc.Core.Api.dll": {
-            "assemblyVersion": "2.0.0.0",
-            "fileVersion": "2.32.0.0"
-          }
-        }
-      },
-      "Grpc.Net.Client/2.32.0": {
-        "dependencies": {
-          "Grpc.Net.Common": "2.32.0"
-        },
-        "runtime": {
-          "lib/net5.0/Grpc.Net.Client.dll": {
-            "assemblyVersion": "2.0.0.0",
-            "fileVersion": "2.32.0.0"
-          }
-        }
-      },
-      "Grpc.Net.ClientFactory/2.32.0": {
-        "dependencies": {
-          "Grpc.Net.Client": "2.32.0"
-        },
-        "runtime": {
-          "lib/net5.0/Grpc.Net.ClientFactory.dll": {
-            "assemblyVersion": "2.0.0.0",
-            "fileVersion": "2.32.0.0"
-          }
-        }
-      },
-      "Grpc.Net.Common/2.32.0": {
-        "dependencies": {
-          "Grpc.Core.Api": "2.32.0"
-        },
-        "runtime": {
-          "lib/net5.0/Grpc.Net.Common.dll": {
-            "assemblyVersion": "2.0.0.0",
-            "fileVersion": "2.32.0.0"
           }
         }
       },
@@ -703,14 +587,6 @@
           }
         }
       },
-      "NBitcoin.Secp256k1/1.0.3": {
-        "runtime": {
-          "lib/netcoreapp2.1/NBitcoin.Secp256k1.dll": {
-            "assemblyVersion": "1.0.3.0",
-            "fileVersion": "1.0.3.0"
-          }
-        }
-      },
       "Newtonsoft.Json/13.0.4": {
         "runtime": {
           "lib/net6.0/Newtonsoft.Json.dll": {
@@ -778,25 +654,6 @@
           "lib/net8.0/Polly.RateLimiting.dll": {
             "assemblyVersion": "8.0.0.0",
             "fileVersion": "8.4.2.3950"
-          }
-        }
-      },
-      "Portable.BouncyCastle/1.8.5.2": {
-        "runtime": {
-          "lib/netstandard2.0/BouncyCastle.Crypto.dll": {
-            "assemblyVersion": "1.8.5.0",
-            "fileVersion": "1.8.5.2"
-          }
-        }
-      },
-      "StowayNet.Extensions.DependencyInjection/5.0.1": {
-        "dependencies": {
-          "Microsoft.Extensions.DependencyModel": "10.0.14"
-        },
-        "runtime": {
-          "lib/net5.0/StowayNet.Extensions.DependencyInjection.dll": {
-            "assemblyVersion": "5.0.1.0",
-            "fileVersion": "5.0.1.0"
           }
         }
       },
@@ -905,59 +762,6 @@
           }
         }
       },
-      "TronNet/0.2.0": {
-        "dependencies": {
-          "StowayNet.Extensions.DependencyInjection": "5.0.1",
-          "TronNet.ABI": "0.2.0",
-          "TronNet.Protocol": "0.2.0"
-        },
-        "runtime": {
-          "lib/net5.0/TronNet.dll": {
-            "assemblyVersion": "0.2.0.0",
-            "fileVersion": "0.2.0.0"
-          }
-        }
-      },
-      "TronNet.ABI/0.2.0": {
-        "dependencies": {
-          "TronNet.Crypto": "0.2.0"
-        },
-        "runtime": {
-          "lib/net5.0/TronNet.ABI.dll": {
-            "assemblyVersion": "0.2.0.0",
-            "fileVersion": "0.2.0.0"
-          }
-        }
-      },
-      "TronNet.Crypto/0.2.0": {
-        "dependencies": {
-          "Google.Api.CommonProtos": "1.7.0",
-          "Google.Protobuf": "3.13.0",
-          "NBitcoin.Secp256k1": "1.0.3",
-          "Portable.BouncyCastle": "1.8.5.2"
-        },
-        "runtime": {
-          "lib/net5.0/TronNet.Crypto.dll": {
-            "assemblyVersion": "0.2.0.0",
-            "fileVersion": "0.2.0.0"
-          }
-        }
-      },
-      "TronNet.Protocol/0.2.0": {
-        "dependencies": {
-          "Google.Api.CommonProtos": "1.7.0",
-          "Google.Protobuf": "3.13.0",
-          "Grpc": "2.26.0",
-          "Grpc.Net.ClientFactory": "2.32.0",
-          "NBitcoin.Secp256k1": "1.0.3"
-        },
-        "runtime": {
-          "lib/net5.0/TronNet.Protocol.dll": {
-            "assemblyVersion": "0.2.0.0",
-            "fileVersion": "0.2.0.0"
-          }
-        }
-      },
       "Gateway.Application/1.0.0": {
         "dependencies": {
           "FluentValidation.DependencyInjectionExtensions": "12.2.0",
@@ -973,11 +777,9 @@
       },
       "Gateway.Blockchain.Tron/1.0.0": {
         "dependencies": {
-          "BouncyCastle.Cryptography": "2.7.0",
           "Gateway.Application": "1.0.0",
           "Gateway.Domain": "1.0.0",
-          "NBitcoin": "10.0.19",
-          "TronNet": "0.2.0"
+          "NBitcoin": "10.0.19"
         },
         "runtime": {
           "Gateway.Blockchain.Tron.dll": {
@@ -1029,13 +831,6 @@
       "serviceable": false,
       "sha512": ""
     },
-    "BouncyCastle.Cryptography/2.7.0": {
-      "type": "package",
-      "serviceable": true,
-      "sha512": "sha512-U+12df8UEWHgBi04YVf/Lgi2dy3SItlIYvHjjEVa/BngCQIzDCDRBk50DDByCfDvSbe5pRNFr3b7UrVK2kMcLw==",
-      "path": "bouncycastle.cryptography/2.7.0",
-      "hashPath": "bouncycastle.cryptography.2.7.0.nupkg.sha512"
-    },
     "FluentValidation/12.2.0": {
       "type": "package",
       "serviceable": true,
@@ -1049,62 +844,6 @@
       "sha512": "sha512-QpKXgiO9E6wXCh19X2Musn8MZM0xt7KQt/QrD6GDBn3MCUfy8a+rkhCzrYJNCfoxTsTRQ7bpKP8T3geTnJNNeQ==",
       "path": "fluentvalidation.dependencyinjectionextensions/12.2.0",
       "hashPath": "fluentvalidation.dependencyinjectionextensions.12.2.0.nupkg.sha512"
-    },
-    "Google.Api.CommonProtos/1.7.0": {
-      "type": "package",
-      "serviceable": true,
-      "sha512": "sha512-RQG8nYUb+B1CKxXqtXBy7Kfj4r0c3mE4itQaFHuLzf7BXPeAOHPRKgU02kemBmuNMeJ+GSK+6D/RrFkjSFxvOA==",
-      "path": "google.api.commonprotos/1.7.0",
-      "hashPath": "google.api.commonprotos.1.7.0.nupkg.sha512"
-    },
-    "Google.Protobuf/3.13.0": {
-      "type": "package",
-      "serviceable": true,
-      "sha512": "sha512-/6VgKCh0P59x/rYsBkCvkUanF0TeUYzwV9hzLIWgt23QRBaKHoxaaMkidEWhKibLR88c3PVCXyyrx9Xlb+Ne6w==",
-      "path": "google.protobuf/3.13.0",
-      "hashPath": "google.protobuf.3.13.0.nupkg.sha512"
-    },
-    "Grpc/2.26.0": {
-      "type": "package",
-      "serviceable": true,
-      "sha512": "sha512-4XM9ZpgfAts30G4CKZ2/vtysULbuH+fNOfPbPCOAWZPr22uc6Nw8Qi6YLyQl2WvmcoyZeeFiGnJtFzJdnYIwgw==",
-      "path": "grpc/2.26.0",
-      "hashPath": "grpc.2.26.0.nupkg.sha512"
-    },
-    "Grpc.Core/2.26.0": {
-      "type": "package",
-      "serviceable": true,
-      "sha512": "sha512-bRXHtGcG3gZu/w1V559C3G+78Ab1Eycngr2/y6LHt3JeNghfHP5YWyyRDToEaXOh57XL1Kxh002nVZChceTzoA==",
-      "path": "grpc.core/2.26.0",
-      "hashPath": "grpc.core.2.26.0.nupkg.sha512"
-    },
-    "Grpc.Core.Api/2.32.0": {
-      "type": "package",
-      "serviceable": true,
-      "sha512": "sha512-t9H6P/oYA4ZQI4fWq4eEwq2GmMNqmOSRfz5+YIat7pQuFmz1hRC2Vq/fL9ZVV1mjd5kHqBlhupMdlsBOsaxeEw==",
-      "path": "grpc.core.api/2.32.0",
-      "hashPath": "grpc.core.api.2.32.0.nupkg.sha512"
-    },
-    "Grpc.Net.Client/2.32.0": {
-      "type": "package",
-      "serviceable": true,
-      "sha512": "sha512-T4lKl51ahaSprLcgoZvgn8zYwh834DpaPnrDs6jBRdipL2NHIAC0rPeE7UyzDp/lzv4Xll2tw1u65Fg9ckvErg==",
-      "path": "grpc.net.client/2.32.0",
-      "hashPath": "grpc.net.client.2.32.0.nupkg.sha512"
-    },
-    "Grpc.Net.ClientFactory/2.32.0": {
-      "type": "package",
-      "serviceable": true,
-      "sha512": "sha512-ixqSWxPK49P+5z6M2dDBHca0k+sXFe2KHHTJK3P+YXp6QOTHv5CHxNdaW8GrFF34Eh1FJ56Q2ADe383+FEAp6Q==",
-      "path": "grpc.net.clientfactory/2.32.0",
-      "hashPath": "grpc.net.clientfactory.2.32.0.nupkg.sha512"
-    },
-    "Grpc.Net.Common/2.32.0": {
-      "type": "package",
-      "serviceable": true,
-      "sha512": "sha512-vDsgy6fs+DlsylppjK9FBGTMMUe8vfAmaURV7ZTurM27itr8qBwymgqmwnVB2hcP1q35NqKx2NvPGe5S2IEnDw==",
-      "path": "grpc.net.common/2.32.0",
-      "hashPath": "grpc.net.common.2.32.0.nupkg.sha512"
     },
     "Humanizer.Core/2.14.1": {
       "type": "package",
@@ -1330,13 +1069,6 @@
       "path": "nbitcoin/10.0.19",
       "hashPath": "nbitcoin.10.0.19.nupkg.sha512"
     },
-    "NBitcoin.Secp256k1/1.0.3": {
-      "type": "package",
-      "serviceable": true,
-      "sha512": "sha512-TCRUf7C44H/Hy42Ad1g0Dt83EfEH0l+4OuDhnWrzVsPBNiM6s6YRHnHYT+0dxGZKxD0CgdCTZ5f9Z2Ml1RRGbw==",
-      "path": "nbitcoin.secp256k1/1.0.3",
-      "hashPath": "nbitcoin.secp256k1.1.0.3.nupkg.sha512"
-    },
     "Newtonsoft.Json/13.0.4": {
       "type": "package",
       "serviceable": true,
@@ -1385,20 +1117,6 @@
       "sha512": "sha512-ehTImQ/eUyO07VYW2WvwSmU9rRH200SKJ/3jku9rOkyWE0A2JxNFmAVms8dSn49QLSjmjFRRSgfNyOgr/2PSmA==",
       "path": "polly.ratelimiting/8.4.2",
       "hashPath": "polly.ratelimiting.8.4.2.nupkg.sha512"
-    },
-    "Portable.BouncyCastle/1.8.5.2": {
-      "type": "package",
-      "serviceable": true,
-      "sha512": "sha512-iLfdr+T33QrDpsvcKRbMVk0PnjqE4hcrbgc6IH+A1BdPAThZlMB9s5TtFANhVVtdS+0oN3yIivgXRPRET7zuZw==",
-      "path": "portable.bouncycastle/1.8.5.2",
-      "hashPath": "portable.bouncycastle.1.8.5.2.nupkg.sha512"
-    },
-    "StowayNet.Extensions.DependencyInjection/5.0.1": {
-      "type": "package",
-      "serviceable": true,
-      "sha512": "sha512-vvPtTlzRqMW6sJdvyW1rjhMkU//DD0o1K5RkkPMLSRIOe14gB0tKS51Wru7N962U3DhWheG86SSR9kDcM51qtw==",
-      "path": "stowaynet.extensions.dependencyinjection/5.0.1",
-      "hashPath": "stowaynet.extensions.dependencyinjection.5.0.1.nupkg.sha512"
     },
     "Swashbuckle.AspNetCore/10.3.1": {
       "type": "package",
@@ -1476,34 +1194,6 @@
       "sha512": "sha512-aRZlojCCGEHDKqh43jaDgaVpYETsgd7Nx4g1zwLKMtv4iTo0627715ajEFNpEEBTgLmvZuv8K0EVxc3sM4NWJA==",
       "path": "system.composition.typedparts/9.0.0",
       "hashPath": "system.composition.typedparts.9.0.0.nupkg.sha512"
-    },
-    "TronNet/0.2.0": {
-      "type": "package",
-      "serviceable": true,
-      "sha512": "sha512-UEZ/AH6LCDVMHojkeTdQHchtVwBxaltnxF2kPmaJj7wzdLrf6gUrTooi3RPa6OD1/b3UOif6Dxx9deTQE7RxDQ==",
-      "path": "tronnet/0.2.0",
-      "hashPath": "tronnet.0.2.0.nupkg.sha512"
-    },
-    "TronNet.ABI/0.2.0": {
-      "type": "package",
-      "serviceable": true,
-      "sha512": "sha512-rVchDZ0q6/LCpF2voFepCE+pm72/fH8GbR1P6+AtWR9ZkXOr7if11FR278lPLecLeGP8ta/09Oy0ffYHsV9HbA==",
-      "path": "tronnet.abi/0.2.0",
-      "hashPath": "tronnet.abi.0.2.0.nupkg.sha512"
-    },
-    "TronNet.Crypto/0.2.0": {
-      "type": "package",
-      "serviceable": true,
-      "sha512": "sha512-maywnPkYFTiexJw0I+HiBgMJT94dTIpLKtwi7xqqJVaoDpTlFxTIn8SFhwpa8N7xv+UdT9z1wV7xnVT31kw/8w==",
-      "path": "tronnet.crypto/0.2.0",
-      "hashPath": "tronnet.crypto.0.2.0.nupkg.sha512"
-    },
-    "TronNet.Protocol/0.2.0": {
-      "type": "package",
-      "serviceable": true,
-      "sha512": "sha512-9+9794AkkZcvm4AX2njJiHwTiOBShGlCV55cSVeyCDwgQCkoj12Xdn4a5x3zEzsvRx4BShbgrZ7Ay8Nd+s0B9w==",
-      "path": "tronnet.protocol/0.2.0",
-      "hashPath": "tronnet.protocol.0.2.0.nupkg.sha512"
     },
     "Gateway.Application/1.0.0": {
       "type": "project",

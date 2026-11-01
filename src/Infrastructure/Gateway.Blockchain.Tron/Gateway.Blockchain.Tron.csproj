@@ -6,9 +6,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="BouncyCastle.Cryptography" Version="2.7.0" />
     <PackageReference Include="NBitcoin" Version="10.0.19" />
-    <PackageReference Include="TronNet" Version="0.2.0" />
   </ItemGroup>
 
   <PropertyGroup>

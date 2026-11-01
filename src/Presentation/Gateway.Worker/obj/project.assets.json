@@ -2,19 +2,6 @@
   "version": 4,
   "targets": {
     "net10.0": {
-      "BouncyCastle.Cryptography/2.7.0": {
-        "type": "package",
-        "compile": {
-          "lib/net6.0/BouncyCastle.Cryptography.dll": {
-            "related": ".xml"
-          }
-        },
-        "runtime": {
-          "lib/net6.0/BouncyCastle.Cryptography.dll": {
-            "related": ".xml"
-          }
-        }
-      },
       "FluentValidation/12.2.0": {
         "type": "package",
         "compile": {
@@ -42,155 +29,6 @@
         "runtime": {
           "lib/net8.0/FluentValidation.DependencyInjectionExtensions.dll": {
             "related": ".xml"
-          }
-        }
-      },
-      "Google.Api.CommonProtos/1.7.0": {
-        "type": "package",
-        "dependencies": {
-          "Google.Protobuf": "3.8.0"
-        },
-        "compile": {
-          "lib/netstandard2.0/Google.Api.CommonProtos.dll": {
-            "related": ".pdb;.xml"
-          }
-        },
-        "runtime": {
-          "lib/netstandard2.0/Google.Api.CommonProtos.dll": {
-            "related": ".pdb;.xml"
-          }
-        }
-      },
-      "Google.Protobuf/3.13.0": {
-        "type": "package",
-        "compile": {
-          "lib/netstandard2.0/Google.Protobuf.dll": {
-            "related": ".pdb;.xml"
-          }
-        },
-        "runtime": {
-          "lib/netstandard2.0/Google.Protobuf.dll": {
-            "related": ".pdb;.xml"
-          }
-        }
-      },
-      "Google.Protobuf.Tools/3.11.2": {
-        "type": "package",
-        "build": {
-          "build/_._": {}
-        },
-        "buildMultiTargeting": {
-          "buildCrossTargeting/_._": {}
-        }
-      },
-      "Grpc/2.26.0": {
-        "type": "package",
-        "dependencies": {
-          "Grpc.Core": "2.26.0"
-        }
-      },
-      "Grpc.Core/2.26.0": {
-        "type": "package",
-        "dependencies": {
-          "Grpc.Core.Api": "2.26.0"
-        },
-        "compile": {
-          "lib/netstandard2.0/Grpc.Core.dll": {
-            "related": ".pdb;.xml"
-          }
-        },
-        "runtime": {
-          "lib/netstandard2.0/Grpc.Core.dll": {
-            "related": ".pdb;.xml"
-          }
-        },
-        "runtimeTargets": {
-          "runtimes/linux/native/libgrpc_csharp_ext.x64.so": {
-            "assetType": "native",
-            "rid": "linux"
-          },
-          "runtimes/linux/native/libgrpc_csharp_ext.x86.so": {
-            "assetType": "native",
-            "rid": "linux"
-          },
-          "runtimes/osx/native/libgrpc_csharp_ext.x64.dylib": {
-            "assetType": "native",
-            "rid": "osx"
-          },
-          "runtimes/osx/native/libgrpc_csharp_ext.x86.dylib": {
-            "assetType": "native",
-            "rid": "osx"
-          },
-          "runtimes/win/native/grpc_csharp_ext.x64.dll": {
-            "assetType": "native",
-            "rid": "win"
-          },
-          "runtimes/win/native/grpc_csharp_ext.x86.dll": {
-            "assetType": "native",
-            "rid": "win"
-          }
-        }
-      },
-      "Grpc.Core.Api/2.32.0": {
-        "type": "package",
-        "compile": {
-          "lib/netstandard2.0/Grpc.Core.Api.dll": {
-            "related": ".pdb;.xml"
-          }
-        },
-        "runtime": {
-          "lib/netstandard2.0/Grpc.Core.Api.dll": {
-            "related": ".pdb;.xml"
-          }
-        }
-      },
-      "Grpc.Net.Client/2.32.0": {
-        "type": "package",
-        "dependencies": {
-          "Grpc.Net.Common": "2.32.0",
-          "Microsoft.Extensions.Logging.Abstractions": "3.0.3"
-        },
-        "compile": {
-          "lib/net5.0/Grpc.Net.Client.dll": {
-            "related": ".pdb;.xml"
-          }
-        },
-        "runtime": {
-          "lib/net5.0/Grpc.Net.Client.dll": {
-            "related": ".pdb;.xml"
-          }
-        }
-      },
-      "Grpc.Net.ClientFactory/2.32.0": {
-        "type": "package",
-        "dependencies": {
-          "Grpc.Net.Client": "2.32.0",
-          "Microsoft.Extensions.Http": "3.0.3"
-        },
-        "compile": {
-          "lib/net5.0/Grpc.Net.ClientFactory.dll": {
-            "related": ".pdb;.xml"
-          }
-        },
-        "runtime": {
-          "lib/net5.0/Grpc.Net.ClientFactory.dll": {
-            "related": ".pdb;.xml"
-          }
-        }
-      },
-      "Grpc.Net.Common/2.32.0": {
-        "type": "package",
-        "dependencies": {
-          "Grpc.Core.Api": "2.32.0"
-        },
-        "compile": {
-          "lib/net5.0/Grpc.Net.Common.dll": {
-            "related": ".pdb;.xml"
-          }
-        },
-        "runtime": {
-          "lib/net5.0/Grpc.Net.Common.dll": {
-            "related": ".pdb;.xml"
           }
         }
       },
@@ -527,19 +365,6 @@
           "buildTransitive/net8.0/_._": {}
         }
       },
-      "Microsoft.Extensions.DependencyModel/5.0.0": {
-        "type": "package",
-        "compile": {
-          "lib/netstandard2.0/Microsoft.Extensions.DependencyModel.dll": {
-            "related": ".xml"
-          }
-        },
-        "runtime": {
-          "lib/netstandard2.0/Microsoft.Extensions.DependencyModel.dll": {
-            "related": ".xml"
-          }
-        }
-      },
       "Microsoft.Extensions.Diagnostics/10.0.12": {
         "type": "package",
         "dependencies": {
@@ -698,24 +523,6 @@
         },
         "build": {
           "buildTransitive/net8.0/_._": {}
-        }
-      },
-      "Microsoft.Extensions.Http/3.0.3": {
-        "type": "package",
-        "dependencies": {
-          "Microsoft.Extensions.DependencyInjection.Abstractions": "3.0.3",
-          "Microsoft.Extensions.Logging": "3.0.3",
-          "Microsoft.Extensions.Options": "3.0.3"
-        },
-        "compile": {
-          "lib/netcoreapp3.0/Microsoft.Extensions.Http.dll": {
-            "related": ".xml"
-          }
-        },
-        "runtime": {
-          "lib/netcoreapp3.0/Microsoft.Extensions.Http.dll": {
-            "related": ".xml"
-          }
         }
       },
       "Microsoft.Extensions.Logging/10.0.14": {
@@ -1012,15 +819,6 @@
           }
         }
       },
-      "NBitcoin.Secp256k1/1.0.3": {
-        "type": "package",
-        "compile": {
-          "lib/netcoreapp2.1/NBitcoin.Secp256k1.dll": {}
-        },
-        "runtime": {
-          "lib/netcoreapp2.1/NBitcoin.Secp256k1.dll": {}
-        }
-      },
       "Newtonsoft.Json/13.0.4": {
         "type": "package",
         "compile": {
@@ -1068,33 +866,6 @@
           }
         }
       },
-      "Portable.BouncyCastle/1.8.5.2": {
-        "type": "package",
-        "compile": {
-          "lib/netstandard2.0/BouncyCastle.Crypto.dll": {
-            "related": ".xml"
-          }
-        },
-        "runtime": {
-          "lib/netstandard2.0/BouncyCastle.Crypto.dll": {
-            "related": ".xml"
-          }
-        }
-      },
-      "StowayNet.Extensions.DependencyInjection/5.0.1": {
-        "type": "package",
-        "dependencies": {
-          "Microsoft.Extensions.Configuration.Abstractions": "5.0.0",
-          "Microsoft.Extensions.DependencyInjection": "5.0.0",
-          "Microsoft.Extensions.DependencyModel": "5.0.0"
-        },
-        "compile": {
-          "lib/net5.0/StowayNet.Extensions.DependencyInjection.dll": {}
-        },
-        "runtime": {
-          "lib/net5.0/StowayNet.Extensions.DependencyInjection.dll": {}
-        }
-      },
       "System.Diagnostics.EventLog/10.0.12": {
         "type": "package",
         "compile": {
@@ -1121,65 +892,6 @@
           }
         }
       },
-      "TronNet/0.2.0": {
-        "type": "package",
-        "dependencies": {
-          "StowayNet.Extensions.DependencyInjection": "5.0.1",
-          "TronNet.ABI": "0.2.0",
-          "TronNet.Protocol": "0.2.0"
-        },
-        "compile": {
-          "lib/net5.0/TronNet.dll": {}
-        },
-        "runtime": {
-          "lib/net5.0/TronNet.dll": {}
-        }
-      },
-      "TronNet.ABI/0.2.0": {
-        "type": "package",
-        "dependencies": {
-          "TronNet.Crypto": "0.2.0"
-        },
-        "compile": {
-          "lib/net5.0/TronNet.ABI.dll": {}
-        },
-        "runtime": {
-          "lib/net5.0/TronNet.ABI.dll": {}
-        }
-      },
-      "TronNet.Crypto/0.2.0": {
-        "type": "package",
-        "dependencies": {
-          "Google.Api.CommonProtos": "1.7.0",
-          "Google.Protobuf": "3.13.0",
-          "Google.Protobuf.Tools": "3.11.2",
-          "NBitcoin.Secp256k1": "1.0.3",
-          "Portable.BouncyCastle": "1.8.5.2"
-        },
-        "compile": {
-          "lib/net5.0/TronNet.Crypto.dll": {}
-        },
-        "runtime": {
-          "lib/net5.0/TronNet.Crypto.dll": {}
-        }
-      },
-      "TronNet.Protocol/0.2.0": {
-        "type": "package",
-        "dependencies": {
-          "Google.Api.CommonProtos": "1.7.0",
-          "Google.Protobuf": "3.13.0",
-          "Google.Protobuf.Tools": "3.11.2",
-          "Grpc": "2.26.0",
-          "Grpc.Net.ClientFactory": "2.32.0",
-          "NBitcoin.Secp256k1": "1.0.3"
-        },
-        "compile": {
-          "lib/net5.0/TronNet.Protocol.dll": {}
-        },
-        "runtime": {
-          "lib/net5.0/TronNet.Protocol.dll": {}
-        }
-      },
       "Gateway.Application/1.0.0": {
         "type": "project",
         "framework": ".NETCoreApp,Version=v10.0",
@@ -1200,11 +912,9 @@
         "type": "project",
         "framework": ".NETCoreApp,Version=v10.0",
         "dependencies": {
-          "BouncyCastle.Cryptography": "2.7.0",
           "Gateway.Application": "1.0.0",
           "Gateway.Domain": "1.0.0",
-          "NBitcoin": "10.0.19",
-          "TronNet": "0.2.0"
+          "NBitcoin": "10.0.19"
         },
         "compile": {
           "bin/placeholder/Gateway.Blockchain.Tron.dll": {}
@@ -1242,26 +952,6 @@
     }
   },
   "libraries": {
-    "BouncyCastle.Cryptography/2.7.0": {
-      "sha512": "U+12df8UEWHgBi04YVf/Lgi2dy3SItlIYvHjjEVa/BngCQIzDCDRBk50DDByCfDvSbe5pRNFr3b7UrVK2kMcLw==",
-      "type": "package",
-      "path": "bouncycastle.cryptography/2.7.0",
-      "files": [
-        ".nupkg.metadata",
-        ".signature.p7s",
-        "LICENSE.md",
-        "README.md",
-        "bouncycastle.cryptography.2.7.0.nupkg.sha512",
-        "bouncycastle.cryptography.nuspec",
-        "lib/net461/BouncyCastle.Cryptography.dll",
-        "lib/net461/BouncyCastle.Cryptography.xml",
-        "lib/net6.0/BouncyCastle.Cryptography.dll",
-        "lib/net6.0/BouncyCastle.Cryptography.xml",
-        "lib/netstandard2.0/BouncyCastle.Cryptography.dll",
-        "lib/netstandard2.0/BouncyCastle.Cryptography.xml",
-        "packageIcon.png"
-      ]
-    },
     "FluentValidation/12.2.0": {
       "sha512": "DR3lFbdnKucaaj1/8zMNOACMz/64igzox1yVZSFVsLxYB5mxAB+wFP1WZ8fjwrZnbU1KA1DoMzHKYKxUfuZ4wQ==",
       "type": "package",
@@ -1290,197 +980,6 @@
         "fluentvalidation.dependencyinjectionextensions.nuspec",
         "lib/net8.0/FluentValidation.DependencyInjectionExtensions.dll",
         "lib/net8.0/FluentValidation.DependencyInjectionExtensions.xml"
-      ]
-    },
-    "Google.Api.CommonProtos/1.7.0": {
-      "sha512": "RQG8nYUb+B1CKxXqtXBy7Kfj4r0c3mE4itQaFHuLzf7BXPeAOHPRKgU02kemBmuNMeJ+GSK+6D/RrFkjSFxvOA==",
-      "type": "package",
-      "path": "google.api.commonprotos/1.7.0",
-      "files": [
-        ".nupkg.metadata",
-        ".signature.p7s",
-        "LICENSE",
-        "google.api.commonprotos.1.7.0.nupkg.sha512",
-        "google.api.commonprotos.nuspec",
-        "lib/net45/Google.Api.CommonProtos.dll",
-        "lib/net45/Google.Api.CommonProtos.pdb",
-        "lib/net45/Google.Api.CommonProtos.xml",
-        "lib/netstandard1.3/Google.Api.CommonProtos.dll",
-        "lib/netstandard1.3/Google.Api.CommonProtos.pdb",
-        "lib/netstandard1.3/Google.Api.CommonProtos.xml",
-        "lib/netstandard2.0/Google.Api.CommonProtos.dll",
-        "lib/netstandard2.0/Google.Api.CommonProtos.pdb",
-        "lib/netstandard2.0/Google.Api.CommonProtos.xml"
-      ]
-    },
-    "Google.Protobuf/3.13.0": {
-      "sha512": "/6VgKCh0P59x/rYsBkCvkUanF0TeUYzwV9hzLIWgt23QRBaKHoxaaMkidEWhKibLR88c3PVCXyyrx9Xlb+Ne6w==",
-      "type": "package",
-      "path": "google.protobuf/3.13.0",
-      "files": [
-        ".nupkg.metadata",
-        ".signature.p7s",
-        "google.protobuf.3.13.0.nupkg.sha512",
-        "google.protobuf.nuspec",
-        "lib/net45/Google.Protobuf.dll",
-        "lib/net45/Google.Protobuf.pdb",
-        "lib/net45/Google.Protobuf.xml",
-        "lib/netstandard1.1/Google.Protobuf.dll",
-        "lib/netstandard1.1/Google.Protobuf.pdb",
-        "lib/netstandard1.1/Google.Protobuf.xml",
-        "lib/netstandard2.0/Google.Protobuf.dll",
-        "lib/netstandard2.0/Google.Protobuf.pdb",
-        "lib/netstandard2.0/Google.Protobuf.xml"
-      ]
-    },
-    "Google.Protobuf.Tools/3.11.2": {
-      "sha512": "fJzw2XR7j/B9Hd7oT+Wh1VKhVKJDdjVw5T06vUg2IE6J4Mv/reQ5nsJwB8S4giGRsFINefCs+lBAHBzYfr+BzQ==",
-      "type": "package",
-      "path": "google.protobuf.tools/3.11.2",
-      "hasTools": true,
-      "files": [
-        ".nupkg.metadata",
-        ".signature.p7s",
-        "build/Google.Protobuf.Tools.targets",
-        "buildCrossTargeting/Google.Protobuf.Tools.targets",
-        "google.protobuf.tools.3.11.2.nupkg.sha512",
-        "google.protobuf.tools.nuspec",
-        "tools/google/protobuf/any.proto",
-        "tools/google/protobuf/api.proto",
-        "tools/google/protobuf/descriptor.proto",
-        "tools/google/protobuf/duration.proto",
-        "tools/google/protobuf/empty.proto",
-        "tools/google/protobuf/field_mask.proto",
-        "tools/google/protobuf/source_context.proto",
-        "tools/google/protobuf/struct.proto",
-        "tools/google/protobuf/timestamp.proto",
-        "tools/google/protobuf/type.proto",
-        "tools/google/protobuf/wrappers.proto",
-        "tools/linux_x64/protoc",
-        "tools/linux_x86/protoc",
-        "tools/macosx_x64/protoc",
-        "tools/macosx_x86/protoc",
-        "tools/windows_x64/protoc.exe",
-        "tools/windows_x86/protoc.exe"
-      ]
-    },
-    "Grpc/2.26.0": {
-      "sha512": "4XM9ZpgfAts30G4CKZ2/vtysULbuH+fNOfPbPCOAWZPr22uc6Nw8Qi6YLyQl2WvmcoyZeeFiGnJtFzJdnYIwgw==",
-      "type": "package",
-      "path": "grpc/2.26.0",
-      "files": [
-        ".nupkg.metadata",
-        ".signature.p7s",
-        "grpc.2.26.0.nupkg.sha512",
-        "grpc.nuspec"
-      ]
-    },
-    "Grpc.Core/2.26.0": {
-      "sha512": "bRXHtGcG3gZu/w1V559C3G+78Ab1Eycngr2/y6LHt3JeNghfHP5YWyyRDToEaXOh57XL1Kxh002nVZChceTzoA==",
-      "type": "package",
-      "path": "grpc.core/2.26.0",
-      "files": [
-        ".nupkg.metadata",
-        ".signature.p7s",
-        "build/MonoAndroid10/Grpc.Core.targets",
-        "build/Xamarin.iOS10/Grpc.Core.targets",
-        "build/net45/Grpc.Core.targets",
-        "grpc.core.2.26.0.nupkg.sha512",
-        "grpc.core.nuspec",
-        "lib/net45/Grpc.Core.dll",
-        "lib/net45/Grpc.Core.pdb",
-        "lib/net45/Grpc.Core.xml",
-        "lib/netstandard1.5/Grpc.Core.dll",
-        "lib/netstandard1.5/Grpc.Core.pdb",
-        "lib/netstandard1.5/Grpc.Core.xml",
-        "lib/netstandard2.0/Grpc.Core.dll",
-        "lib/netstandard2.0/Grpc.Core.pdb",
-        "lib/netstandard2.0/Grpc.Core.xml",
-        "native/android/arm64-v8a/libgrpc_csharp_ext.so",
-        "native/android/armeabi-v7a/libgrpc_csharp_ext.so",
-        "native/android/x86/libgrpc_csharp_ext.so",
-        "native/ios/universal/libgrpc.a",
-        "native/ios/universal/libgrpc_csharp_ext.a",
-        "runtimes/linux/native/libgrpc_csharp_ext.x64.so",
-        "runtimes/linux/native/libgrpc_csharp_ext.x86.so",
-        "runtimes/osx/native/libgrpc_csharp_ext.x64.dylib",
-        "runtimes/osx/native/libgrpc_csharp_ext.x86.dylib",
-        "runtimes/win/native/grpc_csharp_ext.x64.dll",
-        "runtimes/win/native/grpc_csharp_ext.x86.dll"
-      ]
-    },
-    "Grpc.Core.Api/2.32.0": {
-      "sha512": "t9H6P/oYA4ZQI4fWq4eEwq2GmMNqmOSRfz5+YIat7pQuFmz1hRC2Vq/fL9ZVV1mjd5kHqBlhupMdlsBOsaxeEw==",
-      "type": "package",
-      "path": "grpc.core.api/2.32.0",
-      "files": [
-        ".nupkg.metadata",
-        ".signature.p7s",
-        "grpc.core.api.2.32.0.nupkg.sha512",
-        "grpc.core.api.nuspec",
-        "lib/net45/Grpc.Core.Api.dll",
-        "lib/net45/Grpc.Core.Api.pdb",
-        "lib/net45/Grpc.Core.Api.xml",
-        "lib/netstandard1.5/Grpc.Core.Api.dll",
-        "lib/netstandard1.5/Grpc.Core.Api.pdb",
-        "lib/netstandard1.5/Grpc.Core.Api.xml",
-        "lib/netstandard2.0/Grpc.Core.Api.dll",
-        "lib/netstandard2.0/Grpc.Core.Api.pdb",
-        "lib/netstandard2.0/Grpc.Core.Api.xml"
-      ]
-    },
-    "Grpc.Net.Client/2.32.0": {
-      "sha512": "T4lKl51ahaSprLcgoZvgn8zYwh834DpaPnrDs6jBRdipL2NHIAC0rPeE7UyzDp/lzv4Xll2tw1u65Fg9ckvErg==",
-      "type": "package",
-      "path": "grpc.net.client/2.32.0",
-      "files": [
-        ".nupkg.metadata",
-        ".signature.p7s",
-        "grpc.net.client.2.32.0.nupkg.sha512",
-        "grpc.net.client.nuspec",
-        "lib/net5.0/Grpc.Net.Client.dll",
-        "lib/net5.0/Grpc.Net.Client.pdb",
-        "lib/net5.0/Grpc.Net.Client.xml",
-        "lib/netstandard2.1/Grpc.Net.Client.dll",
-        "lib/netstandard2.1/Grpc.Net.Client.pdb",
-        "lib/netstandard2.1/Grpc.Net.Client.xml",
-        "packageIcon.png"
-      ]
-    },
-    "Grpc.Net.ClientFactory/2.32.0": {
-      "sha512": "ixqSWxPK49P+5z6M2dDBHca0k+sXFe2KHHTJK3P+YXp6QOTHv5CHxNdaW8GrFF34Eh1FJ56Q2ADe383+FEAp6Q==",
-      "type": "package",
-      "path": "grpc.net.clientfactory/2.32.0",
-      "files": [
-        ".nupkg.metadata",
-        ".signature.p7s",
-        "grpc.net.clientfactory.2.32.0.nupkg.sha512",
-        "grpc.net.clientfactory.nuspec",
-        "lib/net5.0/Grpc.Net.ClientFactory.dll",
-        "lib/net5.0/Grpc.Net.ClientFactory.pdb",
-        "lib/net5.0/Grpc.Net.ClientFactory.xml",
-        "lib/netstandard2.1/Grpc.Net.ClientFactory.dll",
-        "lib/netstandard2.1/Grpc.Net.ClientFactory.pdb",
-        "lib/netstandard2.1/Grpc.Net.ClientFactory.xml",
-        "packageIcon.png"
-      ]
-    },
-    "Grpc.Net.Common/2.32.0": {
-      "sha512": "vDsgy6fs+DlsylppjK9FBGTMMUe8vfAmaURV7ZTurM27itr8qBwymgqmwnVB2hcP1q35NqKx2NvPGe5S2IEnDw==",
-      "type": "package",
-      "path": "grpc.net.common/2.32.0",
-      "files": [
-        ".nupkg.metadata",
-        ".signature.p7s",
-        "grpc.net.common.2.32.0.nupkg.sha512",
-        "grpc.net.common.nuspec",
-        "lib/net5.0/Grpc.Net.Common.dll",
-        "lib/net5.0/Grpc.Net.Common.pdb",
-        "lib/net5.0/Grpc.Net.Common.xml",
-        "lib/netstandard2.1/Grpc.Net.Common.dll",
-        "lib/netstandard2.1/Grpc.Net.Common.pdb",
-        "lib/netstandard2.1/Grpc.Net.Common.xml",
-        "packageIcon.png"
       ]
     },
     "MediatR/14.2.0": {
@@ -1950,32 +1449,6 @@
         "useSharedDesignerContext.txt"
       ]
     },
-    "Microsoft.Extensions.DependencyModel/5.0.0": {
-      "sha512": "umBECCoMC+sOUgm083yFr8SxTobUOcPFH4AXigdO2xJiszCHAnmeDl4qPphJt+oaJ/XIfV1wOjIts2nRnki61Q==",
-      "type": "package",
-      "path": "microsoft.extensions.dependencymodel/5.0.0",
-      "files": [
-        ".nupkg.metadata",
-        ".signature.p7s",
-        "Icon.png",
-        "LICENSE.TXT",
-        "THIRD-PARTY-NOTICES.TXT",
-        "lib/net451/Microsoft.Extensions.DependencyModel.dll",
-        "lib/net451/Microsoft.Extensions.DependencyModel.xml",
-        "lib/net461/Microsoft.Extensions.DependencyModel.dll",
-        "lib/net461/Microsoft.Extensions.DependencyModel.xml",
-        "lib/netstandard1.3/Microsoft.Extensions.DependencyModel.dll",
-        "lib/netstandard1.3/Microsoft.Extensions.DependencyModel.xml",
-        "lib/netstandard1.6/Microsoft.Extensions.DependencyModel.dll",
-        "lib/netstandard1.6/Microsoft.Extensions.DependencyModel.xml",
-        "lib/netstandard2.0/Microsoft.Extensions.DependencyModel.dll",
-        "lib/netstandard2.0/Microsoft.Extensions.DependencyModel.xml",
-        "microsoft.extensions.dependencymodel.5.0.0.nupkg.sha512",
-        "microsoft.extensions.dependencymodel.nuspec",
-        "useSharedDesignerContext.txt",
-        "version.txt"
-      ]
-    },
     "Microsoft.Extensions.Diagnostics/10.0.12": {
       "sha512": "amx0O/R4dReqKlC3T740+CHpX8D8tAIV0f5kAPfFi4XK9jYo9BSepGt9/rWfvvCoSMaZ1+XvnqPp/Vv2fmTdAg==",
       "type": "package",
@@ -2179,22 +1652,6 @@
         "microsoft.extensions.hosting.abstractions.10.0.12.nupkg.sha512",
         "microsoft.extensions.hosting.abstractions.nuspec",
         "useSharedDesignerContext.txt"
-      ]
-    },
-    "Microsoft.Extensions.Http/3.0.3": {
-      "sha512": "dcyB8szIcSynjVZRuFgqkZpPgTc5zeRSj1HMXSmNqWbHYKiPYJl8ZQgBHz6wmZNSUUNGpCs5uxUg8DZHHDC1Ew==",
-      "type": "package",
-      "path": "microsoft.extensions.http/3.0.3",
-      "files": [
-        ".nupkg.metadata",
-        ".signature.p7s",
-        "Icon.png",
-        "lib/netcoreapp3.0/Microsoft.Extensions.Http.dll",
-        "lib/netcoreapp3.0/Microsoft.Extensions.Http.xml",
-        "lib/netstandard2.0/Microsoft.Extensions.Http.dll",
-        "lib/netstandard2.0/Microsoft.Extensions.Http.xml",
-        "microsoft.extensions.http.3.0.3.nupkg.sha512",
-        "microsoft.extensions.http.nuspec"
       ]
     },
     "Microsoft.Extensions.Logging/10.0.14": {
@@ -2662,20 +2119,6 @@
         "nbitcoin.nuspec"
       ]
     },
-    "NBitcoin.Secp256k1/1.0.3": {
-      "sha512": "TCRUf7C44H/Hy42Ad1g0Dt83EfEH0l+4OuDhnWrzVsPBNiM6s6YRHnHYT+0dxGZKxD0CgdCTZ5f9Z2Ml1RRGbw==",
-      "type": "package",
-      "path": "nbitcoin.secp256k1/1.0.3",
-      "files": [
-        ".nupkg.metadata",
-        ".signature.p7s",
-        "icon.png",
-        "lib/netcoreapp2.1/NBitcoin.Secp256k1.dll",
-        "lib/netstandard2.1/NBitcoin.Secp256k1.dll",
-        "nbitcoin.secp256k1.1.0.3.nupkg.sha512",
-        "nbitcoin.secp256k1.nuspec"
-      ]
-    },
     "Newtonsoft.Json/13.0.4": {
       "sha512": "pdgNNMai3zv51W5aq268sujXUyx7SNdE2bj1wZcWjAQrKMFZV260lbqYop1d2GM67JI1huLRwxo9ZqnfF/lC6A==",
       "type": "package",
@@ -2740,33 +2183,6 @@
         "postgresql.png"
       ]
     },
-    "Portable.BouncyCastle/1.8.5.2": {
-      "sha512": "iLfdr+T33QrDpsvcKRbMVk0PnjqE4hcrbgc6IH+A1BdPAThZlMB9s5TtFANhVVtdS+0oN3yIivgXRPRET7zuZw==",
-      "type": "package",
-      "path": "portable.bouncycastle/1.8.5.2",
-      "files": [
-        ".nupkg.metadata",
-        ".signature.p7s",
-        "lib/net40/BouncyCastle.Crypto.dll",
-        "lib/net40/BouncyCastle.Crypto.xml",
-        "lib/netstandard2.0/BouncyCastle.Crypto.dll",
-        "lib/netstandard2.0/BouncyCastle.Crypto.xml",
-        "portable.bouncycastle.1.8.5.2.nupkg.sha512",
-        "portable.bouncycastle.nuspec"
-      ]
-    },
-    "StowayNet.Extensions.DependencyInjection/5.0.1": {
-      "sha512": "vvPtTlzRqMW6sJdvyW1rjhMkU//DD0o1K5RkkPMLSRIOe14gB0tKS51Wru7N962U3DhWheG86SSR9kDcM51qtw==",
-      "type": "package",
-      "path": "stowaynet.extensions.dependencyinjection/5.0.1",
-      "files": [
-        ".nupkg.metadata",
-        ".signature.p7s",
-        "lib/net5.0/StowayNet.Extensions.DependencyInjection.dll",
-        "stowaynet.extensions.dependencyinjection.5.0.1.nupkg.sha512",
-        "stowaynet.extensions.dependencyinjection.nuspec"
-      ]
-    },
     "System.Diagnostics.EventLog/10.0.12": {
       "sha512": "sOZM+VyRj1pg/ItlHsvrSbjws6oGqZveTzTNBGZ9ziwRDyKsOF3ub6vhvOdxotCIqtlnyHAIwP5sLNvgiZC+pQ==",
       "type": "package",
@@ -2803,54 +2219,6 @@
         "system.diagnostics.eventlog.10.0.12.nupkg.sha512",
         "system.diagnostics.eventlog.nuspec",
         "useSharedDesignerContext.txt"
-      ]
-    },
-    "TronNet/0.2.0": {
-      "sha512": "UEZ/AH6LCDVMHojkeTdQHchtVwBxaltnxF2kPmaJj7wzdLrf6gUrTooi3RPa6OD1/b3UOif6Dxx9deTQE7RxDQ==",
-      "type": "package",
-      "path": "tronnet/0.2.0",
-      "files": [
-        ".nupkg.metadata",
-        ".signature.p7s",
-        "lib/net5.0/TronNet.dll",
-        "tronnet.0.2.0.nupkg.sha512",
-        "tronnet.nuspec"
-      ]
-    },
-    "TronNet.ABI/0.2.0": {
-      "sha512": "rVchDZ0q6/LCpF2voFepCE+pm72/fH8GbR1P6+AtWR9ZkXOr7if11FR278lPLecLeGP8ta/09Oy0ffYHsV9HbA==",
-      "type": "package",
-      "path": "tronnet.abi/0.2.0",
-      "files": [
-        ".nupkg.metadata",
-        ".signature.p7s",
-        "lib/net5.0/TronNet.ABI.dll",
-        "tronnet.abi.0.2.0.nupkg.sha512",
-        "tronnet.abi.nuspec"
-      ]
-    },
-    "TronNet.Crypto/0.2.0": {
-      "sha512": "maywnPkYFTiexJw0I+HiBgMJT94dTIpLKtwi7xqqJVaoDpTlFxTIn8SFhwpa8N7xv+UdT9z1wV7xnVT31kw/8w==",
-      "type": "package",
-      "path": "tronnet.crypto/0.2.0",
-      "files": [
-        ".nupkg.metadata",
-        ".signature.p7s",
-        "lib/net5.0/TronNet.Crypto.dll",
-        "tronnet.crypto.0.2.0.nupkg.sha512",
-        "tronnet.crypto.nuspec"
-      ]
-    },
-    "TronNet.Protocol/0.2.0": {
-      "sha512": "9+9794AkkZcvm4AX2njJiHwTiOBShGlCV55cSVeyCDwgQCkoj12Xdn4a5x3zEzsvRx4BShbgrZ7Ay8Nd+s0B9w==",
-      "type": "package",
-      "path": "tronnet.protocol/0.2.0",
-      "files": [
-        ".nupkg.metadata",
-        ".signature.p7s",
-        "lib/net5.0/TronNet.Protocol.dll",
-        "tronnet.protocol.0.2.0.nupkg.sha512",
-        "tronnet.protocol.nuspec"
       ]
     },
     "Gateway.Application/1.0.0": {
