@@ -15,6 +15,7 @@ public class GatewayDbContext : DbContext
     public DbSet<OutboxEvent> OutboxEvents => Set<OutboxEvent>();
     public DbSet<MerchantNonce> MerchantNonces => Set<MerchantNonce>();
     public DbSet<BlockchainScanCursor> BlockchainScanCursors => Set<BlockchainScanCursor>();
+    public DbSet<SweepTask> SweepTasks => Set<SweepTask>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -72,6 +73,13 @@ public class GatewayDbContext : DbContext
         modelBuilder.Entity<BlockchainScanCursor>(b =>
         {
             b.HasKey(c => new { c.Network, c.Address });
+        });
+        
+        modelBuilder.Entity<SweepTask>(b =>
+        {
+            b.HasKey(s => s.Id);
+            b.HasIndex(s => new { s.MerchantId, s.Status });
+            b.HasIndex(s => s.DerivedAddressId);
         });
     }
 }

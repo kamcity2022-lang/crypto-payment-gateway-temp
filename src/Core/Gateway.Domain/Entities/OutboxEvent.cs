@@ -56,4 +56,11 @@ public class OutboxEvent
         NextAttemptAtUtc = null;
         LastError = null;
     }
+    
+    public void ScheduleManualRedelivery()
+    {
+        IsProcessed = false;
+        NextAttemptAtUtc = DateTime.UtcNow;
+        LastError = null;
+    }
 }

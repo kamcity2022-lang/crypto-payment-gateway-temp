@@ -19,52 +19,54 @@ public class TronScannerService : ITronScannerService
     private readonly GatewayDbContext _dbContext;
     private readonly HttpClient _httpClient;
     private readonly ILogger<TronScannerService> _logger;
-    private readonly ulong _requiredConfirmations;
     private readonly string _usdtContractAddress;
+    private readonly ISecretProtector _secretProtector;
 
     public TronScannerService(
         GatewayDbContext dbContext,
         HttpClient httpClient,
         IConfiguration configuration,
+        ISecretProtector secretProtector,
         ILogger<TronScannerService> logger)
     {
         _dbContext = dbContext;
         _httpClient = httpClient;
+        _secretProtector = secretProtector;
         _logger = logger;
-
-        // Parse configuration safely without relying on Microsoft.Extensions.Configuration.Binder
-        var confVal = configuration["Tron:RequiredConfirmations"];
-        _requiredConfirmations = ulong.TryParse(confVal, out var parsedConf) ? parsedConf : 19;
-        _usdtContractAddress = configuration["Tron:UsdtContractAddress"] ?? "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t";
+        _usdtContractAddress = configuration["Tron:UsdtContractAddress"] 
+            ?? throw new InvalidOperationException("Configuration 'Tron:UsdtContractAddress' is required.");
     }
 
     public async Task ScanPendingDepositsAsync(CancellationToken cancellationToken)
     {
-        // 1. Get real current confirmed head block from TRON network
-        var currentBlockNumber = await GetCurrentBlockNumberAsync(cancellationToken);
-        if (currentBlockNumber == 0)
+        var solidifiedBlockNumber = await GetSolidifiedBlockNumberAsync(cancellationToken);
+        if (solidifiedBlockNumber == 0)
         {
-            _logger.LogWarning("Unable to retrieve TRON head block. Skipping current scan cycle.");
+            _logger.LogWarning("Unable to resolve solidified block height. Aborting scan cycle.");
             return;
         }
 
-        // 2. Fetch active invoices (Pending, PartiallyPaid, plus recently expired buffer)
-        var scanThreshold = DateTime.UtcNow.AddHours(-2);
+        // Include Pending, PartiallyPaid, Underpaid, and recently Expired or Paid (for overpayment auditing)
+        var retentionThreshold = DateTime.UtcNow.AddDays(-7);
         var invoices = await _dbContext.Invoices
             .Include(i => i.Transfers)
-            .Where(i => (i.Status == InvoiceStatus.Pending || i.Status == InvoiceStatus.PartiallyPaid || i.Status == InvoiceStatus.Expired)
-                        && i.CreatedAtUtc >= scanThreshold)
+            .Where(i => i.CreatedAtUtc >= retentionThreshold &&
+                        (i.Status == InvoiceStatus.Pending ||
+                         i.Status == InvoiceStatus.PartiallyPaid ||
+                         i.Status == InvoiceStatus.Underpaid ||
+                         i.Status == InvoiceStatus.Paid ||
+                         i.Status == InvoiceStatus.Expired))
             .ToListAsync(cancellationToken);
 
         foreach (var invoice in invoices)
         {
-            await ScanInvoiceAddressAsync(invoice, currentBlockNumber, cancellationToken);
+            await ScanInvoiceWithPaginationAsync(invoice, solidifiedBlockNumber, cancellationToken);
         }
 
         await _dbContext.SaveChangesAsync(cancellationToken);
     }
 
-    private async Task ScanInvoiceAddressAsync(Invoice invoice, ulong currentBlockNumber, CancellationToken ct)
+    private async Task ScanInvoiceWithPaginationAsync(Invoice invoice, ulong solidifiedBlockNumber, CancellationToken ct)
     {
         var cursor = await _dbContext.BlockchainScanCursors
             .FirstOrDefaultAsync(c => c.Network == "TRON" && c.Address == invoice.DepositAddress, ct);
@@ -75,114 +77,145 @@ public class TronScannerService : ITronScannerService
             _dbContext.BlockchainScanCursors.Add(cursor);
         }
 
-        var minTimestamp = cursor.LastProcessedBlockTimestamp > 0 ? cursor.LastProcessedBlockTimestamp : 0;
-        var url = $"https://api.trongrid.io/v1/accounts/{invoice.DepositAddress}/transactions/trc20?contract_address={_usdtContractAddress}&min_timestamp={minTimestamp}&limit=20";
+        string? fingerprint = cursor.LastFingerprint;
+        bool hasMorePages = true;
 
-        HttpResponseMessage response;
-        try
+        while (hasMorePages)
         {
-            response = await _httpClient.GetAsync(url, ct);
+            var url = $"https://api.trongrid.io/v1/accounts/{invoice.DepositAddress}/transactions/trc20?contract_address={_usdtContractAddress}&limit=20";
+            if (!string.IsNullOrEmpty(fingerprint))
+            {
+                url += $"&fingerprint={Uri.EscapeDataString(fingerprint)}";
+            }
+            else if (cursor.LastProcessedBlockTimestamp > 0)
+            {
+                url += $"&min_timestamp={cursor.LastProcessedBlockTimestamp}";
+            }
+
+            using var request = new HttpRequestMessage(HttpMethod.Get, url);
+            using var response = await _httpClient.SendAsync(request, ct);
+
             if (!response.IsSuccessStatusCode)
             {
-                _logger.LogWarning("TronGrid API returned {Status} for address {Address}", response.StatusCode, invoice.DepositAddress);
-                return;
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Network failure while scanning TRON address {Address}", invoice.DepositAddress);
-            return;
-        }
-
-        var json = await response.Content.ReadAsStringAsync(ct);
-        using var doc = JsonDocument.Parse(json);
-
-        if (!doc.RootElement.TryGetProperty("data", out var dataElement) || dataElement.GetArrayLength() == 0)
-            return;
-
-        long latestTimestamp = cursor.LastProcessedBlockTimestamp;
-
-        foreach (var item in dataElement.EnumerateArray())
-        {
-            var toAddress = item.GetProperty("to").GetString() ?? string.Empty;
-            if (!string.Equals(toAddress, invoice.DepositAddress, StringComparison.OrdinalIgnoreCase))
-                continue;
-
-            var txHash = item.GetProperty("transaction_id").GetString() ?? string.Empty;
-            var fromAddress = item.GetProperty("from").GetString() ?? string.Empty;
-            var rawValue = item.GetProperty("value").GetString() ?? "0";
-            var blockTimestamp = item.GetProperty("block_timestamp").GetInt64();
-
-            // Extract real event index from TRON response payload
-            var eventIndex = 0;
-            if (item.TryGetProperty("event_index", out var idxElement) && idxElement.TryGetInt32(out var parsedIdx))
-            {
-                eventIndex = parsedIdx;
+                _logger.LogWarning("TronGrid query returned {Status} for address {Address}", response.StatusCode, invoice.DepositAddress);
+                return; // Stop pagination on error; do not advance cursor
             }
 
-            if (!long.TryParse(rawValue, out var amountUnits))
-                continue;
+            var json = await response.Content.ReadAsStringAsync(ct);
+            using var doc = JsonDocument.Parse(json);
 
-            // Fetch actual transaction detail to determine the exact block number
-            var txBlockNumber = await GetTransactionBlockNumberAsync(txHash, ct);
-            if (txBlockNumber == 0)
+            if (!doc.RootElement.TryGetProperty("data", out var dataElement) || dataElement.GetArrayLength() == 0)
             {
-                _logger.LogWarning("Unable to resolve block height for TxHash {TxHash}. Deferring processing.", txHash);
-                continue;
+                break;
             }
 
-            var transfer = await _dbContext.PaymentTransfers
-                .FirstOrDefaultAsync(t => t.Network == "TRON" && t.TransactionHash == txHash && t.TransferIndex == eventIndex, ct);
-
-            if (transfer == null)
+            foreach (var item in dataElement.EnumerateArray())
             {
-                transfer = new PaymentTransfer(
-                    invoice.Id,
-                    "TRON",
-                    txHash,
-                    eventIndex,
-                    _usdtContractAddress,
-                    fromAddress,
-                    toAddress,
-                    amountUnits,
-                    txBlockNumber);
+                var toAddress = item.GetProperty("to").GetString() ?? string.Empty;
+                if (string.IsNullOrEmpty(toAddress) || !string.Equals(toAddress, invoice.DepositAddress, StringComparison.OrdinalIgnoreCase))
+                    continue;
 
-                _dbContext.PaymentTransfers.Add(transfer);
-                invoice.RegisterTransfer(transfer);
-            }
+                var txHash = item.GetProperty("transaction_id").GetString() ?? string.Empty;
+                if (string.IsNullOrEmpty(txHash)) continue;
 
-            // Real confirmation check
-            transfer.UpdateConfirmations(currentBlockNumber, _requiredConfirmations);
-            var prevStatus = invoice.Status;
-            var newStatus = invoice.EvaluateStatus();
-
-            // Enqueue transactional outbox event on meaningful state change
-            if (prevStatus != newStatus && (newStatus == InvoiceStatus.Paid || newStatus == InvoiceStatus.Overpaid || newStatus == InvoiceStatus.PartiallyPaid))
-            {
-                var payload = JsonSerializer.Serialize(new
+                // Establish strict event/log index
+                if (!item.TryGetProperty("event_index", out var idxEl) || !idxEl.TryGetInt32(out var eventIndex))
                 {
-                    @event = $"invoice.{newStatus.ToString().ToLowerInvariant()}",
-                    invoiceId = invoice.Id,
-                    status = newStatus.ToString(),
-                    paidUnits = invoice.PaidAmountUnits,
-                    txHash = txHash
-                });
+                    _logger.LogError("Transfer event index could not be determined for Tx {TxHash}. Skipping to prevent duplicate accounting.", txHash);
+                    continue;
+                }
 
-                var outbox = new OutboxEvent(invoice.Id, $"invoice.{newStatus.ToString().ToLowerInvariant()}", payload, invoice.CallbackUrl, "merchant_secret");
-                _dbContext.OutboxEvents.Add(outbox);
+                var rawValueStr = item.GetProperty("value").GetString() ?? "0";
+                if (!long.TryParse(rawValueStr, out var amountUnits) || amountUnits <= 0) continue;
+
+                var blockTimestamp = item.GetProperty("block_timestamp").GetInt64();
+
+                // Reorganization protection: Verify transaction via SolidityNode
+                var txDetail = await VerifySolidifiedTransactionAsync(txHash, ct);
+                if (!txDetail.IsSolidified || !txDetail.IsSuccess)
+                {
+                    _logger.LogWarning("Tx {TxHash} not solidified or execution failed. Skipping transfer credit.", txHash);
+                    continue;
+                }
+
+                var existingTransfer = await _dbContext.PaymentTransfers
+                    .FirstOrDefaultAsync(t => t.Network == "TRON" && t.TransactionHash == txHash && t.TransferIndex == eventIndex, ct);
+
+                if (existingTransfer == null)
+                {
+                    var fromAddress = item.GetProperty("from").GetString() ?? string.Empty;
+                    var transfer = new PaymentTransfer(
+                        invoice.Id,
+                        "TRON",
+                        txHash,
+                        eventIndex,
+                        _usdtContractAddress,
+                        fromAddress,
+                        toAddress,
+                        amountUnits,
+                        txDetail.BlockNumber);
+
+                    _dbContext.PaymentTransfers.Add(transfer);
+                    var registered = invoice.RegisterTransfer(transfer);
+
+                    if (registered)
+                    {
+                        transfer.UpdateConfirmations(solidifiedBlockNumber, 1); // Confirmed in solidified chain
+                        var previousStatus = invoice.Status;
+                        var currentStatus = invoice.EvaluateStatus();
+
+                        if (previousStatus != currentStatus)
+                        {
+                            var merchant = await _dbContext.Merchants.FindAsync(new object[] { invoice.MerchantId }, ct);
+                            if (merchant != null)
+                            {
+                                var payload = JsonSerializer.Serialize(new
+                                {
+                                    @event = $"invoice.{currentStatus.ToString().ToLowerInvariant()}",
+                                    invoiceId = invoice.Id,
+                                    status = currentStatus.ToString(),
+                                    paidUnits = invoice.PaidAmountUnits,
+                                    expectedUnits = invoice.ExpectedAmountUnits,
+                                    txHash = txHash
+                                });
+
+                                var outbox = new OutboxEvent(
+                                    invoice.Id,
+                                    $"invoice.{currentStatus.ToString().ToLowerInvariant()}",
+                                    payload,
+                                    invoice.CallbackUrl,
+                                    merchant.EncryptedWebhookSecret);
+
+                                _dbContext.OutboxEvents.Add(outbox);
+                            }
+                        }
+                    }
+                }
+
+                cursor.UpdateCursor(blockTimestamp, txDetail.BlockNumber);
             }
 
-            latestTimestamp = Math.Max(latestTimestamp, blockTimestamp);
+            // Check next page fingerprint
+            if (doc.RootElement.TryGetProperty("meta", out var meta) &&
+                meta.TryGetProperty("fingerprint", out var fpProp) &&
+                !string.IsNullOrWhiteSpace(fpProp.GetString()))
+            {
+                fingerprint = fpProp.GetString();
+                cursor.SetFingerprint(fingerprint);
+            }
+            else
+            {
+                hasMorePages = false;
+                cursor.SetFingerprint(null);
+            }
         }
-
-        cursor.UpdateCursor(latestTimestamp, currentBlockNumber);
     }
 
-    private async Task<ulong> GetCurrentBlockNumberAsync(CancellationToken ct)
+    private async Task<ulong> GetSolidifiedBlockNumberAsync(CancellationToken ct)
     {
         try
         {
-            var res = await _httpClient.GetAsync("https://api.trongrid.io/wallet/getnowblock", ct);
+            var res = await _httpClient.GetAsync("https://api.trongrid.io/walletsolidity/getnowblock", ct);
             if (!res.IsSuccessStatusCode) return 0;
 
             var json = await res.Content.ReadAsStringAsync(ct);
@@ -196,31 +229,43 @@ public class TronScannerService : ITronScannerService
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to retrieve current block number from TronGrid.");
+            _logger.LogError(ex, "Failed to fetch solidified head block from TronGrid.");
         }
         return 0;
     }
 
-    private async Task<ulong> GetTransactionBlockNumberAsync(string txHash, CancellationToken ct)
+    private async Task<(bool IsSolidified, bool IsSuccess, ulong BlockNumber)> VerifySolidifiedTransactionAsync(string txHash, CancellationToken ct)
     {
         try
         {
-            var res = await _httpClient.PostAsync("https://api.trongrid.io/wallet/gettransactioninfobyid",
-                new StringContent(JsonSerializer.Serialize(new { value = txHash })), ct);
+            using var content = new StringContent(JsonSerializer.Serialize(new { value = txHash }), System.Text.Encoding.UTF8, "application/json");
+            var res = await _httpClient.PostAsync("https://api.trongrid.io/walletsolidity/gettransactioninfobyid", content, ct);
 
-            if (!res.IsSuccessStatusCode) return 0;
+            if (!res.IsSuccessStatusCode) return (false, false, 0);
 
             var json = await res.Content.ReadAsStringAsync(ct);
             using var doc = JsonDocument.Parse(json);
-            if (doc.RootElement.TryGetProperty("blockNumber", out var num))
+
+            if (doc.RootElement.ValueKind != JsonValueKind.Object || !doc.RootElement.TryGetProperty("blockNumber", out var bNum))
             {
-                return (ulong)num.GetInt64();
+                return (false, false, 0);
             }
+
+            ulong blockNumber = (ulong)bNum.GetInt64();
+            bool isSuccess = true;
+
+            if (doc.RootElement.TryGetProperty("receipt", out var receipt) &&
+                receipt.TryGetProperty("result", out var resultStr))
+            {
+                isSuccess = string.Equals(resultStr.GetString(), "SUCCESS", StringComparison.OrdinalIgnoreCase);
+            }
+
+            return (true, isSuccess, blockNumber);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to retrieve tx info for {TxHash}", txHash);
+            _logger.LogError(ex, "Error verifying solidified transaction for hash {TxHash}", txHash);
+            return (false, false, 0);
         }
-        return 0;
     }
 }

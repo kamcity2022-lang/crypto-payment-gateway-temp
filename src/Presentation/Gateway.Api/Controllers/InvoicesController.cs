@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Data;
 using System.Security.Cryptography;
 using System.Threading;
 using System.Threading.Tasks;
@@ -6,7 +7,6 @@ using Gateway.Api.Authentication;
 using Gateway.Application.DTOs;
 using Gateway.Blockchain.Tron;
 using Gateway.Domain.Entities;
-using Gateway.Domain.Enums;
 using Gateway.Persistence;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -30,12 +30,19 @@ public class InvoicesController : ControllerBase
     {
         var merchantId = (Guid)HttpContext.Items["MerchantId"]!;
 
-        await using var tx = await _dbContext.Database.BeginTransactionAsync(ct);
+        // Restrict fiat currency support explicitly (Phase E requirement)
+        var fiatCurrency = request.FiatCurrency.Trim().ToUpperInvariant();
+        if (fiatCurrency != "USD")
+        {
+            return BadRequest(new { error = $"Unsupported fiat currency '{fiatCurrency}'. Only 'USD' is supported currently." });
+        }
 
-        // Pessimistic / row-level lock equivalent by reloading tracked wallet entity
+        await using var tx = await _dbContext.Database.BeginTransactionAsync(IsolationLevel.ReadCommitted, ct);
+
+        // Exclusive row lock on the wallet row to prevent concurrent derivation collisions
         var wallet = await _dbContext.Wallets
-            .Include(w => w.DerivedAddresses)
-            .FirstOrDefaultAsync(w => w.MerchantId == merchantId && w.Network == "TRON", ct);
+            .FromSqlInterpolated($"SELECT * FROM \"Wallets\" WHERE \"MerchantId\" = {merchantId} AND \"Network\" = 'TRON' FOR UPDATE")
+            .FirstOrDefaultAsync(ct);
 
         if (wallet == null)
         {
@@ -46,10 +53,10 @@ public class InvoicesController : ControllerBase
         var derivedAddressStr = derivationService.DeriveAddress(wallet.LastDerivationIndex);
         var derivedAddressEntity = wallet.AllocateNextAddress(derivedAddressStr);
 
-        // Snapshot Exchange Rate
-        const decimal exchangeRate = 1.0m; // USDT peg baseline
+        // Explicit 1.0 USD -> 1.0 USDT snapshot pegged rate
+        const decimal exchangeRate = 1.0m;
         var cryptoAmount = request.FiatAmount / exchangeRate;
-        var expectedUnits = (long)(cryptoAmount * 1_000_000m);
+        var expectedUnits = (long)Math.Round(cryptoAmount * 1_000_000m, MidpointRounding.AwayFromZero);
         var underpaymentThreshold = 50_000L;
 
         var checkoutToken = Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
@@ -59,7 +66,7 @@ public class InvoicesController : ControllerBase
             derivedAddressId: derivedAddressEntity.Id,
             depositAddress: derivedAddressStr,
             fiatAmount: request.FiatAmount,
-            fiatCurrency: request.FiatCurrency.ToUpperInvariant(),
+            fiatCurrency: fiatCurrency,
             exchangeRate: exchangeRate,
             exchangeRateSource: "DirectPegProvider",
             exchangeRateTimestampUtc: DateTime.UtcNow,
@@ -86,7 +93,6 @@ public class InvoicesController : ControllerBase
             Currency = invoice.Currency,
             Network = invoice.Network,
             Status = invoice.Status.ToString(),
-            // Ensure unified route matches frontend checkout.html?token=...
             CheckoutUrl = $"{Request.Scheme}://{Request.Host}/checkout.html?token={invoice.CheckoutToken}",
             ExpiresAtUtc = invoice.ExpiresAtUtc,
             CreatedAtUtc = invoice.CreatedAtUtc

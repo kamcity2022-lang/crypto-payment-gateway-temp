@@ -9,6 +9,7 @@ public class Merchant
     public string ApiKeyHash { get; private set; } = string.Empty;
     public string EncryptedApiKeySecret { get; private set; } = string.Empty;
     public string EncryptedWebhookSecret { get; private set; } = string.Empty;
+    public string? SettlementAddress { get; private set; }
     public DateTime CreatedAtUtc { get; private set; }
     public bool IsActive { get; private set; }
 
@@ -23,5 +24,24 @@ public class Merchant
         EncryptedWebhookSecret = encryptedWebhookSecret;
         CreatedAtUtc = DateTime.UtcNow;
         IsActive = true;
+    }
+
+    public void SetSettlementAddress(string settlementAddress)
+    {
+        if (string.IsNullOrWhiteSpace(settlementAddress))
+            throw new ArgumentException("Settlement address cannot be empty.", nameof(settlementAddress));
+
+        var trimmed = settlementAddress.Trim();
+        if (trimmed.Length != 34 || !trimmed.StartsWith("T", StringComparison.Ordinal))
+            throw new ArgumentException("Invalid TRON settlement address format.", nameof(settlementAddress));
+
+        const string base58Alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+        foreach (var c in trimmed)
+        {
+            if (!base58Alphabet.Contains(c))
+                throw new ArgumentException("Settlement address contains invalid Base58 characters.", nameof(settlementAddress));
+        }
+
+        SettlementAddress = trimmed;
     }
 }

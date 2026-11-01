@@ -8,6 +8,7 @@ public class BlockchainScanCursor
     public string Address { get; private set; } = string.Empty;
     public long LastProcessedBlockTimestamp { get; private set; }
     public ulong LastProcessedBlockNumber { get; private set; }
+    public string? LastFingerprint { get; private set; }
     public DateTime UpdatedAtUtc { get; private set; }
 
     private BlockchainScanCursor() { }
@@ -18,6 +19,7 @@ public class BlockchainScanCursor
         Address = address;
         LastProcessedBlockTimestamp = initialTimestamp;
         LastProcessedBlockNumber = initialBlockNumber;
+        LastFingerprint = null;
         UpdatedAtUtc = DateTime.UtcNow;
     }
 
@@ -29,5 +31,11 @@ public class BlockchainScanCursor
             LastProcessedBlockNumber = Math.Max(LastProcessedBlockNumber, blockNumber);
             UpdatedAtUtc = DateTime.UtcNow;
         }
+    }
+
+    public void SetFingerprint(string? fingerprint)
+    {
+        LastFingerprint = fingerprint;
+        UpdatedAtUtc = DateTime.UtcNow;
     }
 }
