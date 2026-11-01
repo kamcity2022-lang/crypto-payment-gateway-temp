@@ -82,7 +82,7 @@ public class CorePaymentEngineE2ETests
             eventType: "invoice.paid",
             payload: webhookPayload,
             destinationUrl: invoice.CallbackUrl,
-            secretKey: "merchant-webhook-secret"
+            encryptedSecretKey: "merchant-webhook-secret"
         );
 
         outboxEvent.IsProcessed.Should().BeFalse();

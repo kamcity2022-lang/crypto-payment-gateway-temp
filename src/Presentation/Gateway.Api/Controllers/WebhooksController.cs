@@ -113,7 +113,7 @@ public class WebhooksController : ControllerBase
             eventType: "webhook.test",
             payload: payload,
             destinationUrl: destination,
-            secretKey: merchant.EncryptedWebhookSecret
+            encryptedSecretKey: merchant.EncryptedWebhookSecret
         );
 
         _dbContext.OutboxEvents.Add(outboxEvent);

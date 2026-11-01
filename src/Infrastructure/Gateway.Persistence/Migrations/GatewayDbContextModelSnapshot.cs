@@ -293,6 +293,10 @@ namespace Gateway.Persistence.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
+                    b.Property<string>("EncryptedSecretKey")
+                        .IsRequired()
+                        .HasColumnType("text");
+
                     b.Property<string>("EventType")
                         .IsRequired()
                         .HasColumnType("text");
@@ -303,14 +307,13 @@ namespace Gateway.Persistence.Migrations
                     b.Property<string>("LastError")
                         .HasColumnType("text");
 
+                    b.Property<DateTime?>("LockedUntilUtc")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<DateTime?>("NextAttemptAtUtc")
                         .HasColumnType("timestamp with time zone");
 
                     b.Property<string>("Payload")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<string>("SecretKey")
                         .IsRequired()
                         .HasColumnType("text");
 

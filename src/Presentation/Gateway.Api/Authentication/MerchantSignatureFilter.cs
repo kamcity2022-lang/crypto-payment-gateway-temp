@@ -21,6 +21,7 @@ public class RequireMerchantSignatureAttribute : Attribute, IAsyncActionFilter
     {
         var request = context.HttpContext.Request;
 
+        // 1. Validate required headers
         if (!request.Headers.TryGetValue("X-API-Key", out var apiKeyVals) ||
             !request.Headers.TryGetValue("X-Signature", out var sigVals) ||
             !request.Headers.TryGetValue("X-Timestamp", out var tsVals) ||
@@ -34,6 +35,7 @@ public class RequireMerchantSignatureAttribute : Attribute, IAsyncActionFilter
         var signature = sigVals.ToString();
         var nonce = nonceVals.ToString();
 
+        // 2. Validate timestamp & clock skew (5 minutes)
         if (!long.TryParse(tsVals.ToString(), out var timestampEpoch))
         {
             context.Result = new UnauthorizedObjectResult(new { error = "Invalid timestamp format." });
@@ -50,6 +52,7 @@ public class RequireMerchantSignatureAttribute : Attribute, IAsyncActionFilter
         var db = context.HttpContext.RequestServices.GetRequiredService<GatewayDbContext>();
         var protector = context.HttpContext.RequestServices.GetRequiredService<ISecretProtector>();
 
+        // 3. Resolve merchant by API Key Hash
         using var sha = SHA256.Create();
         var keyHash = Convert.ToHexString(sha.ComputeHash(Encoding.UTF8.GetBytes(apiKey))).ToLowerInvariant();
         var merchant = await db.Merchants.FirstOrDefaultAsync(m => m.ApiKeyHash == keyHash && m.IsActive);
@@ -60,7 +63,33 @@ public class RequireMerchantSignatureAttribute : Attribute, IAsyncActionFilter
             return;
         }
 
-        // Atomic replay prevention check
+        // 4. Canonical Request Verification
+        request.EnableBuffering();
+        string rawBody;
+        using (var reader = new StreamReader(request.Body, Encoding.UTF8, leaveOpen: true))
+        {
+            rawBody = await reader.ReadToEndAsync();
+            request.Body.Position = 0;
+        }
+
+        var bodyHash = Convert.ToHexString(sha.ComputeHash(Encoding.UTF8.GetBytes(rawBody))).ToLowerInvariant();
+        var queryString = request.QueryString.HasValue ? request.QueryString.Value : string.Empty;
+        var canonical = $"{request.Method.ToUpperInvariant()}\n{request.Path}\n{queryString}\n{timestampEpoch}\n{nonce}\n{bodyHash}";
+
+        var secret = protector.Decrypt(merchant.EncryptedApiKeySecret);
+        using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(secret));
+        var expectedSig = Convert.ToHexString(hmac.ComputeHash(Encoding.UTF8.GetBytes(canonical))).ToLowerInvariant();
+
+        if (!CryptographicOperations.FixedTimeEquals(
+            Encoding.UTF8.GetBytes(signature.ToLowerInvariant()),
+            Encoding.UTF8.GetBytes(expectedSig)))
+        {
+            // Invalid signature must NOT consume nonce
+            context.Result = new UnauthorizedObjectResult(new { error = "Invalid HMAC signature." });
+            return;
+        }
+
+        // 5. Only AFTER successful signature verification, atomically persist the nonce
         var existingNonce = await db.MerchantNonces
             .AnyAsync(n => n.MerchantId == merchant.Id && n.Nonce == nonce);
 
@@ -78,30 +107,6 @@ public class RequireMerchantSignatureAttribute : Attribute, IAsyncActionFilter
         catch (DbUpdateException)
         {
             context.Result = new ConflictObjectResult(new { error = "Replay detected: Duplicate concurrent nonce." });
-            return;
-        }
-
-        // Canonical Request Verification
-        request.EnableBuffering();
-        string rawBody;
-        using (var reader = new StreamReader(request.Body, Encoding.UTF8, leaveOpen: true))
-        {
-            rawBody = await reader.ReadToEndAsync();
-            request.Body.Position = 0;
-        }
-
-        var bodyHash = Convert.ToHexString(sha.ComputeHash(Encoding.UTF8.GetBytes(rawBody))).ToLowerInvariant();
-        var canonical = $"{request.Method.ToUpperInvariant()}\n{request.Path}\n{timestampEpoch}\n{nonce}\n{bodyHash}";
-
-        var secret = protector.Decrypt(merchant.EncryptedApiKeySecret);
-        using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(secret));
-        var expectedSig = Convert.ToHexString(hmac.ComputeHash(Encoding.UTF8.GetBytes(canonical))).ToLowerInvariant();
-
-        if (!CryptographicOperations.FixedTimeEquals(
-            Encoding.UTF8.GetBytes(signature.ToLowerInvariant()),
-            Encoding.UTF8.GetBytes(expectedSig)))
-        {
-            context.Result = new UnauthorizedObjectResult(new { error = "Invalid HMAC signature." });
             return;
         }
 

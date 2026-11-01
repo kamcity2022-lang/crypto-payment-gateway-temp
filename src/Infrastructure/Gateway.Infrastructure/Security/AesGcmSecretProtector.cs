@@ -12,13 +12,31 @@ public class AesGcmSecretProtector : ISecretProtector
 
     public AesGcmSecretProtector(IConfiguration configuration)
     {
-        var keyHex = configuration["Security:MasterEncryptionKey"] 
-                     ?? "0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF"; // 256-bit fallback for dev
-        _masterKey = Convert.FromHexString(keyHex);
+        var keyHex = configuration["Security:MasterEncryptionKey"];
+        if (string.IsNullOrWhiteSpace(keyHex))
+        {
+            throw new InvalidOperationException("Fatal: 'Security:MasterEncryptionKey' configuration is missing. Hardcoded keys are prohibited.");
+        }
+
+        try
+        {
+            _masterKey = Convert.FromHexString(keyHex.Trim());
+        }
+        catch (FormatException ex)
+        {
+            throw new InvalidOperationException("Fatal: 'Security:MasterEncryptionKey' must be a valid hex string.", ex);
+        }
+
+        if (_masterKey.Length != 32) // 256 bits
+        {
+            throw new InvalidOperationException($"Fatal: 'Security:MasterEncryptionKey' must be exactly 256 bits (32 bytes). Current: {_masterKey.Length} bytes.");
+        }
     }
 
     public string Encrypt(string plainText)
     {
+        if (plainText == null) throw new ArgumentNullException(nameof(plainText));
+
         var plainBytes = Encoding.UTF8.GetBytes(plainText);
         var nonce = new byte[AesGcm.NonceByteSizes.MaxSize];
         RandomNumberGenerator.Fill(nonce);
@@ -39,9 +57,14 @@ public class AesGcmSecretProtector : ISecretProtector
 
     public string Decrypt(string cipherText)
     {
+        if (string.IsNullOrWhiteSpace(cipherText)) throw new ArgumentException("Ciphertext cannot be empty.", nameof(cipherText));
+
         var combined = Convert.FromBase64String(cipherText);
         var nonceSize = AesGcm.NonceByteSizes.MaxSize;
         var tagSize = AesGcm.TagByteSizes.MaxSize;
+
+        if (combined.Length < nonceSize + tagSize)
+            throw new CryptographicException("Invalid ciphertext length.");
 
         var nonce = new byte[nonceSize];
         var tag = new byte[tagSize];

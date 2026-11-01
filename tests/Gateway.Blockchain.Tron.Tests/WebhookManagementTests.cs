@@ -16,7 +16,7 @@ public class WebhookManagementTests
             eventType: "invoice.paid",
             payload: "{}",
             destinationUrl: "https://merchant.com/webhook",
-            secretKey: "enc-key"
+            encryptedSecretKey: "enc-key"
         );
 
         // شبیه‌سازی وضعیت شکست در حداکثر تلاش‌ها

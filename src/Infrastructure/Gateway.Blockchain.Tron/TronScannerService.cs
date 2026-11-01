@@ -8,6 +8,7 @@ using Gateway.Application.Contracts;
 using Gateway.Domain.Entities;
 using Gateway.Domain.Enums;
 using Gateway.Persistence;
+using System.Text;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
@@ -20,18 +21,15 @@ public class TronScannerService : ITronScannerService
     private readonly HttpClient _httpClient;
     private readonly ILogger<TronScannerService> _logger;
     private readonly string _usdtContractAddress;
-    private readonly ISecretProtector _secretProtector;
 
     public TronScannerService(
         GatewayDbContext dbContext,
         HttpClient httpClient,
         IConfiguration configuration,
-        ISecretProtector secretProtector,
         ILogger<TronScannerService> logger)
     {
         _dbContext = dbContext;
         _httpClient = httpClient;
-        _secretProtector = secretProtector;
         _logger = logger;
         _usdtContractAddress = configuration["Tron:UsdtContractAddress"] 
             ?? throw new InvalidOperationException("Configuration 'Tron:UsdtContractAddress' is required.");
@@ -42,20 +40,23 @@ public class TronScannerService : ITronScannerService
         var solidifiedBlockNumber = await GetSolidifiedBlockNumberAsync(cancellationToken);
         if (solidifiedBlockNumber == 0)
         {
-            _logger.LogWarning("Unable to resolve solidified block height. Aborting scan cycle.");
+            _logger.LogWarning("SolidityNode head block height could not be determined. Aborting scan cycle safely.");
             return;
         }
 
-        // Include Pending, PartiallyPaid, Underpaid, and recently Expired or Paid (for overpayment auditing)
-        var retentionThreshold = DateTime.UtcNow.AddDays(-7);
+        var now = DateTime.UtcNow;
+
+        // Explicit configurable monitoring policies
+        var latePaymentRetention = now.AddDays(-30);    // Monitor expired invoices for 30 days for late payments
+        var overpaymentRetention = now.AddDays(-7);     // Monitor paid invoices for 7 days for overpayments
+
         var invoices = await _dbContext.Invoices
             .Include(i => i.Transfers)
-            .Where(i => i.CreatedAtUtc >= retentionThreshold &&
-                        (i.Status == InvoiceStatus.Pending ||
-                         i.Status == InvoiceStatus.PartiallyPaid ||
-                         i.Status == InvoiceStatus.Underpaid ||
-                         i.Status == InvoiceStatus.Paid ||
-                         i.Status == InvoiceStatus.Expired))
+            .Where(i => i.Status == InvoiceStatus.Pending ||
+                        i.Status == InvoiceStatus.PartiallyPaid ||
+                        i.Status == InvoiceStatus.Underpaid ||
+                        (i.Status == InvoiceStatus.Expired && i.ExpiresAtUtc >= latePaymentRetention) ||
+                        (i.Status == InvoiceStatus.Paid && i.PaidAtUtc.HasValue && i.PaidAtUtc.Value >= overpaymentRetention))
             .ToListAsync(cancellationToken);
 
         foreach (var invoice in invoices)
@@ -97,8 +98,8 @@ public class TronScannerService : ITronScannerService
 
             if (!response.IsSuccessStatusCode)
             {
-                _logger.LogWarning("TronGrid query returned {Status} for address {Address}", response.StatusCode, invoice.DepositAddress);
-                return; // Stop pagination on error; do not advance cursor
+                _logger.LogWarning("TronGrid query returned HTTP {Status} for address {Address}. Cursor not advanced.", response.StatusCode, invoice.DepositAddress);
+                return; // Fail-closed: Stop pagination without advancing cursor
             }
 
             var json = await response.Content.ReadAsStringAsync(ct);
@@ -112,16 +113,15 @@ public class TronScannerService : ITronScannerService
             foreach (var item in dataElement.EnumerateArray())
             {
                 var toAddress = item.GetProperty("to").GetString() ?? string.Empty;
-                if (string.IsNullOrEmpty(toAddress) || !string.Equals(toAddress, invoice.DepositAddress, StringComparison.OrdinalIgnoreCase))
+                if (!string.Equals(toAddress, invoice.DepositAddress, StringComparison.OrdinalIgnoreCase))
                     continue;
 
                 var txHash = item.GetProperty("transaction_id").GetString() ?? string.Empty;
                 if (string.IsNullOrEmpty(txHash)) continue;
 
-                // Establish strict event/log index
                 if (!item.TryGetProperty("event_index", out var idxEl) || !idxEl.TryGetInt32(out var eventIndex))
                 {
-                    _logger.LogError("Transfer event index could not be determined for Tx {TxHash}. Skipping to prevent duplicate accounting.", txHash);
+                    _logger.LogError("Transfer event_index could not be determined for Tx {TxHash}. Skipping to prevent duplicate accounting.", txHash);
                     continue;
                 }
 
@@ -130,11 +130,11 @@ public class TronScannerService : ITronScannerService
 
                 var blockTimestamp = item.GetProperty("block_timestamp").GetInt64();
 
-                // Reorganization protection: Verify transaction via SolidityNode
+                // Fail-Closed Validation via SolidityNode
                 var txDetail = await VerifySolidifiedTransactionAsync(txHash, ct);
                 if (!txDetail.IsSolidified || !txDetail.IsSuccess)
                 {
-                    _logger.LogWarning("Tx {TxHash} not solidified or execution failed. Skipping transfer credit.", txHash);
+                    _logger.LogWarning("Tx {TxHash} rejected: IsSolidified={Solidified}, IsSuccess={Success}.", txHash, txDetail.IsSolidified, txDetail.IsSuccess);
                     continue;
                 }
 
@@ -160,7 +160,7 @@ public class TronScannerService : ITronScannerService
 
                     if (registered)
                     {
-                        transfer.UpdateConfirmations(solidifiedBlockNumber, 1); // Confirmed in solidified chain
+                        transfer.UpdateConfirmations(solidifiedBlockNumber, 1);
                         var previousStatus = invoice.Status;
                         var currentStatus = invoice.EvaluateStatus();
 
@@ -191,11 +191,16 @@ public class TronScannerService : ITronScannerService
                         }
                     }
                 }
+                else
+                {
+                    // Reconcile confirmations
+                    existingTransfer.UpdateConfirmations(solidifiedBlockNumber, 1);
+                    invoice.EvaluateStatus();
+                }
 
                 cursor.UpdateCursor(blockTimestamp, txDetail.BlockNumber);
             }
 
-            // Check next page fingerprint
             if (doc.RootElement.TryGetProperty("meta", out var meta) &&
                 meta.TryGetProperty("fingerprint", out var fpProp) &&
                 !string.IsNullOrWhiteSpace(fpProp.GetString()))
@@ -229,16 +234,18 @@ public class TronScannerService : ITronScannerService
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to fetch solidified head block from TronGrid.");
+            _logger.LogError(ex, "Failed to query solidified head block from TronGrid.");
         }
         return 0;
     }
 
-    private async Task<(bool IsSolidified, bool IsSuccess, ulong BlockNumber)> VerifySolidifiedTransactionAsync(string txHash, CancellationToken ct)
+    public async Task<(bool IsSolidified, bool IsSuccess, ulong BlockNumber)> VerifySolidifiedTransactionAsync(string txHash, CancellationToken ct)
     {
         try
         {
-            using var content = new StringContent(JsonSerializer.Serialize(new { value = txHash }), System.Text.Encoding.UTF8, "application/json");
+            var jsonPayload = JsonSerializer.Serialize(new { value = txHash });
+            using var content = new StringContent(jsonPayload, Encoding.UTF8, "application/json");
+            
             var res = await _httpClient.PostAsync("https://api.trongrid.io/walletsolidity/gettransactioninfobyid", content, ct);
 
             if (!res.IsSuccessStatusCode) return (false, false, 0);
@@ -246,25 +253,29 @@ public class TronScannerService : ITronScannerService
             var json = await res.Content.ReadAsStringAsync(ct);
             using var doc = JsonDocument.Parse(json);
 
-            if (doc.RootElement.ValueKind != JsonValueKind.Object || !doc.RootElement.TryGetProperty("blockNumber", out var bNum))
+            // Fail-closed validation
+            if (doc.RootElement.ValueKind != JsonValueKind.Object ||
+                !doc.RootElement.TryGetProperty("blockNumber", out var bNum))
             {
                 return (false, false, 0);
             }
 
             ulong blockNumber = (ulong)bNum.GetInt64();
-            bool isSuccess = true;
+            if (blockNumber == 0) return (false, false, 0);
 
-            if (doc.RootElement.TryGetProperty("receipt", out var receipt) &&
-                receipt.TryGetProperty("result", out var resultStr))
+            // Receipt must exist and explicitly equal SUCCESS
+            if (!doc.RootElement.TryGetProperty("receipt", out var receipt) ||
+                !receipt.TryGetProperty("result", out var resultStr) ||
+                !string.Equals(resultStr.GetString(), "SUCCESS", StringComparison.OrdinalIgnoreCase))
             {
-                isSuccess = string.Equals(resultStr.GetString(), "SUCCESS", StringComparison.OrdinalIgnoreCase);
+                return (true, false, blockNumber);
             }
 
-            return (true, isSuccess, blockNumber);
+            return (true, true, blockNumber);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error verifying solidified transaction for hash {TxHash}", txHash);
+            _logger.LogError(ex, "Error verifying solidified transaction {TxHash}", txHash);
             return (false, false, 0);
         }
     }

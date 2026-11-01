@@ -33,8 +33,14 @@ public class CheckoutController : ControllerBase
         if (invoice == null)
             return NotFound(new { error = "Payment checkout session not found." });
 
-        // Update expiry in memory for display
+        var previousStatus = invoice.Status;
         invoice.EvaluateStatus();
+
+        // Persist expiration or status changes atomically
+        if (previousStatus != invoice.Status)
+        {
+            await _dbContext.SaveChangesAsync(ct);
+        }
 
         var remainingSeconds = Math.Max(0, (long)(invoice.ExpiresAtUtc - DateTime.UtcNow).TotalSeconds);
 
