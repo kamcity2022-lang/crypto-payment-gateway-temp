@@ -14,6 +14,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\Core\Gateway.Application\Gateway.Application.csproj" />
+    <ProjectReference Include="..\..\Infrastructure\Gateway.Infrastructure\Gateway.Infrastructure.csproj" />
     <ProjectReference Include="..\..\Infrastructure\Gateway.Persistence\Gateway.Persistence.csproj" />
     <ProjectReference Include="..\..\Infrastructure\Gateway.Blockchain.Tron\Gateway.Blockchain.Tron.csproj" />
   </ItemGroup>

@@ -22,6 +22,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\Infrastructure\Gateway.Blockchain.Tron\Gateway.Blockchain.Tron.csproj" />
     <ProjectReference Include="..\..\src\Core\Gateway.Domain\Gateway.Domain.csproj" />
+    <ProjectReference Include="..\..\src\Infrastructure\Gateway.Infrastructure\Gateway.Infrastructure.csproj" />
   </ItemGroup>
 
 </Project>

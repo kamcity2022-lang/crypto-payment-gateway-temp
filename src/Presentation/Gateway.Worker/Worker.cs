@@ -30,10 +30,14 @@ public class Worker : BackgroundService
                 using var scope = _serviceProvider.CreateScope();
                 var scanner = scope.ServiceProvider.GetRequiredService<ITronScannerService>();
                 await scanner.ScanPendingDepositsAsync(stoppingToken);
+
+                // Dispatch Transactional Outbox Webhook events
+                var webhookDispatcher = scope.ServiceProvider.GetRequiredService<IWebhookDispatcher>();
+                await webhookDispatcher.DispatchPendingWebhooksAsync(stoppingToken);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Unhandled error in Tron Scanner loop.");
+                _logger.LogError(ex, "Unhandled error in worker execution loop.");
             }
 
             // Standard TRON block time is 3 seconds; poll every 5 seconds

@@ -1,5 +1,6 @@
 using Gateway.Application.Contracts;
 using Gateway.Blockchain.Tron;
+using Gateway.Infrastructure.Webhooks;
 using Gateway.Persistence;
 using Gateway.Worker;
 using Microsoft.EntityFrameworkCore;
@@ -16,8 +17,8 @@ var host = Host.CreateDefaultBuilder(args)
         services.AddDbContext<GatewayDbContext>(options =>
             options.UseNpgsql(connectionString));
 
-        // Requires Microsoft.Extensions.Http package
         services.AddHttpClient<ITronScannerService, TronScannerService>();
+        services.AddHttpClient<IWebhookDispatcher, WebhookDispatcher>();
 
         services.AddHostedService<Worker>();
     })

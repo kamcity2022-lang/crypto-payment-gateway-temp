@@ -2,6 +2,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\Core\Gateway.Application\Gateway.Application.csproj" />
+    <ProjectReference Include="..\Gateway.Persistence\Gateway.Persistence.csproj" />
   </ItemGroup>
 
   <ItemGroup>

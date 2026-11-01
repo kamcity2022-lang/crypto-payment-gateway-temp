@@ -14,6 +14,7 @@ public class GatewayDbContext : DbContext
     public DbSet<DerivedAddress> DerivedAddresses => Set<DerivedAddress>();
     public DbSet<Invoice> Invoices => Set<Invoice>();
     public DbSet<PaymentTransfer> PaymentTransfers => Set<PaymentTransfer>();
+    public DbSet<OutboxEvent> OutboxEvents => Set<OutboxEvent>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -107,6 +108,17 @@ public class GatewayDbContext : DbContext
             // Strict composite unique index to prevent duplicate transfer accounting
             b.HasIndex(t => new { t.Network, t.TransactionHash, t.TransferIndex }).IsUnique();
             b.HasIndex(t => t.ToAddress);
+        });
+        
+        // OutboxEvent mapping
+        modelBuilder.Entity<OutboxEvent>(b =>
+        {
+            b.HasKey(o => o.Id);
+            b.Property(o => o.EventType).HasMaxLength(64).IsRequired();
+            b.Property(o => o.DestinationUrl).HasMaxLength(512).IsRequired();
+            b.Property(o => o.SecretKey).HasMaxLength(256).IsRequired();
+            b.Property(o => o.Payload).IsRequired();
+            b.HasIndex(o => new { o.IsProcessed, o.NextAttemptAtUtc });
         });
     }
 }
