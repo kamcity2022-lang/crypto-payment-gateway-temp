@@ -14,15 +14,15 @@ public class Invoice
     public string Currency { get; private set; } = "USDT";
     public string Network { get; private set; } = "TRON";
 
-    // مبالغ تجاری و فیات
     public decimal FiatAmount { get; private set; }
     public string FiatCurrency { get; private set; } = "USD";
-    public decimal ExchangeRate { get; private set; } // نرخ اسنپ‌شات‌شده در لحظه ایجاد
+    public decimal ExchangeRate { get; private set; }
+    public string ExchangeRateSource { get; private set; } = string.Empty;
+    public DateTime ExchangeRateTimestampUtc { get; private set; }
 
-    // محاسبات درون‌زنجیره‌ای با دقت صحیح (Sun: 10^6)
     public long ExpectedAmountUnits { get; private set; }
     public long PaidAmountUnits { get; private set; }
-    public long UnderpaymentThresholdUnits { get; private set; } // آستانه مجاز کسری جزئی
+    public long UnderpaymentThresholdUnits { get; private set; }
 
     public InvoiceStatus Status { get; private set; }
     public string CallbackUrl { get; private set; } = string.Empty;
@@ -44,6 +44,8 @@ public class Invoice
         decimal fiatAmount,
         string fiatCurrency,
         decimal exchangeRate,
+        string exchangeRateSource,
+        DateTime exchangeRateTimestampUtc,
         long expectedAmountUnits,
         long underpaymentThresholdUnits,
         string callbackUrl,
@@ -62,6 +64,8 @@ public class Invoice
         FiatAmount = fiatAmount;
         FiatCurrency = fiatCurrency;
         ExchangeRate = exchangeRate;
+        ExchangeRateSource = exchangeRateSource;
+        ExchangeRateTimestampUtc = exchangeRateTimestampUtc;
         ExpectedAmountUnits = expectedAmountUnits;
         UnderpaymentThresholdUnits = underpaymentThresholdUnits;
         PaidAmountUnits = 0;
@@ -72,32 +76,35 @@ public class Invoice
         ExpiresAtUtc = CreatedAtUtc.Add(validityDuration);
     }
 
-    public void RegisterTransfer(PaymentTransfer transfer)
+    public bool RegisterTransfer(PaymentTransfer transfer)
     {
         if (transfer == null) throw new ArgumentNullException(nameof(transfer));
 
-        // جلوگیری از تکرار رویداد ترانسفر
+        // Idempotency: Ignore duplicate transfers matching (Network, TxHash, TransferIndex)
         if (_transfers.Any(t => t.Network == transfer.Network &&
                                 t.TransactionHash.Equals(transfer.TransactionHash, StringComparison.OrdinalIgnoreCase) &&
                                 t.TransferIndex == transfer.TransferIndex))
         {
-            return;
+            return false;
         }
 
         _transfers.Add(transfer);
         EvaluateStatus();
+        return true;
     }
 
-    public void EvaluateStatus()
+    public InvoiceStatus EvaluateStatus()
     {
-        // جمع کل ترانسفرهای تایید شده
         var confirmedUnits = _transfers
             .Where(t => t.Status == PaymentStatus.Confirmed)
             .Sum(t => t.AmountUnits);
 
         PaidAmountUnits = confirmedUnits;
-
         var now = DateTime.UtcNow;
+
+        // If invoice is already completed/cancelled, do not revert
+        if (Status == InvoiceStatus.Cancelled)
+            return Status;
 
         if (PaidAmountUnits == 0)
         {
@@ -105,7 +112,7 @@ public class Invoice
             {
                 Status = InvoiceStatus.Expired;
             }
-            return;
+            return Status;
         }
 
         var effectiveExpected = ExpectedAmountUnits - UnderpaymentThresholdUnits;
@@ -117,7 +124,6 @@ public class Invoice
         }
         else if (PaidAmountUnits >= effectiveExpected)
         {
-            // واریزی در محدوده آستانه پذیرش کسری
             Status = InvoiceStatus.Paid;
             PaidAtUtc ??= DateTime.UtcNow;
         }
@@ -125,13 +131,15 @@ public class Invoice
         {
             Status = now > ExpiresAtUtc ? InvoiceStatus.Underpaid : InvoiceStatus.PartiallyPaid;
         }
+
+        return Status;
     }
 
-    public void Cancel()
+    public void MarkAsExpiredIfPastDue()
     {
-        if (Status == InvoiceStatus.Paid || Status == InvoiceStatus.Overpaid)
-            throw new InvalidOperationException("Cannot cancel an already paid invoice.");
-
-        Status = InvoiceStatus.Cancelled;
+        if (Status == InvoiceStatus.Pending && DateTime.UtcNow > ExpiresAtUtc && PaidAmountUnits == 0)
+        {
+            Status = InvoiceStatus.Expired;
+        }
     }
 }

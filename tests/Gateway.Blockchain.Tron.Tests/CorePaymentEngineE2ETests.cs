@@ -32,6 +32,8 @@ public class CorePaymentEngineE2ETests
             fiatAmount: 50.0m,
             fiatCurrency: "USD",
             exchangeRate: 1.0m,
+            exchangeRateSource: "DirectPegProvider",
+            exchangeRateTimestampUtc: DateTime.UtcNow,
             expectedAmountUnits: expectedUnits,
             underpaymentThresholdUnits: 50_000L,
             callbackUrl: "https://api.store.com/webhooks/crypto",

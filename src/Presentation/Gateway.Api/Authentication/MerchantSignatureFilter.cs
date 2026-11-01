@@ -3,6 +3,8 @@ using System.IO;
 using System.Security.Cryptography;
 using System.Text;
 using System.Threading.Tasks;
+using Gateway.Application.Contracts;
+using Gateway.Domain.Entities;
 using Gateway.Persistence;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
@@ -19,51 +21,67 @@ public class RequireMerchantSignatureAttribute : Attribute, IAsyncActionFilter
     {
         var request = context.HttpContext.Request;
 
-        // Verify required security headers
-        if (!request.Headers.TryGetValue("X-API-Key", out var apiKeyValues) ||
-            !request.Headers.TryGetValue("X-Signature", out var signatureValues) ||
-            !request.Headers.TryGetValue("X-Timestamp", out var timestampValues) ||
-            !request.Headers.TryGetValue("X-Nonce", out var nonceValues))
+        if (!request.Headers.TryGetValue("X-API-Key", out var apiKeyVals) ||
+            !request.Headers.TryGetValue("X-Signature", out var sigVals) ||
+            !request.Headers.TryGetValue("X-Timestamp", out var tsVals) ||
+            !request.Headers.TryGetValue("X-Nonce", out var nonceVals))
         {
-            context.Result = new ObjectResult(new { error = "Missing required security headers (X-API-Key, X-Signature, X-Timestamp, X-Nonce)." })
-            {
-                StatusCode = StatusCodes.Status401Unauthorized
-            };
+            context.Result = new UnauthorizedObjectResult(new { error = "Missing required authentication headers." });
             return;
         }
 
-        var apiKey = apiKeyValues.ToString();
-        var signature = signatureValues.ToString();
-        var timestampStr = timestampValues.ToString();
-        var nonce = nonceValues.ToString();
+        var apiKey = apiKeyVals.ToString();
+        var signature = sigVals.ToString();
+        var nonce = nonceVals.ToString();
 
-        // Check timestamp window (5 minutes)
-        if (!long.TryParse(timestampStr, out var timestampEpoch))
+        if (!long.TryParse(tsVals.ToString(), out var timestampEpoch))
         {
             context.Result = new UnauthorizedObjectResult(new { error = "Invalid timestamp format." });
             return;
         }
 
-        var requestTime = DateTimeOffset.FromUnixTimeSeconds(timestampEpoch).UtcDateTime;
-        if (Math.Abs((DateTime.UtcNow - requestTime).TotalMinutes) > 5)
+        var reqTime = DateTimeOffset.FromUnixTimeSeconds(timestampEpoch).UtcDateTime;
+        if (Math.Abs((DateTime.UtcNow - reqTime).TotalMinutes) > 5)
         {
             context.Result = new UnauthorizedObjectResult(new { error = "Request timestamp expired or skewed beyond 5 minutes." });
             return;
         }
 
-        var dbContext = context.HttpContext.RequestServices.GetRequiredService<GatewayDbContext>();
+        var db = context.HttpContext.RequestServices.GetRequiredService<GatewayDbContext>();
+        var protector = context.HttpContext.RequestServices.GetRequiredService<ISecretProtector>();
 
-        // Hash API Key to look up Merchant
-        var apiKeyHash = ComputeSha256(apiKey);
-        var merchant = await dbContext.Merchants.FirstOrDefaultAsync(m => m.ApiKeyHash == apiKeyHash && m.IsActive);
+        using var sha = SHA256.Create();
+        var keyHash = Convert.ToHexString(sha.ComputeHash(Encoding.UTF8.GetBytes(apiKey))).ToLowerInvariant();
+        var merchant = await db.Merchants.FirstOrDefaultAsync(m => m.ApiKeyHash == keyHash && m.IsActive);
 
         if (merchant == null)
         {
-            context.Result = new UnauthorizedObjectResult(new { error = "Invalid or inactive merchant API key." });
+            context.Result = new UnauthorizedObjectResult(new { error = "Invalid merchant credentials." });
             return;
         }
 
-        // Read Raw Body for signature computation
+        // Atomic replay prevention check
+        var existingNonce = await db.MerchantNonces
+            .AnyAsync(n => n.MerchantId == merchant.Id && n.Nonce == nonce);
+
+        if (existingNonce)
+        {
+            context.Result = new ConflictObjectResult(new { error = "Replay detected: Nonce has already been used." });
+            return;
+        }
+
+        db.MerchantNonces.Add(new MerchantNonce(merchant.Id, nonce, TimeSpan.FromMinutes(10)));
+        try
+        {
+            await db.SaveChangesAsync();
+        }
+        catch (DbUpdateException)
+        {
+            context.Result = new ConflictObjectResult(new { error = "Replay detected: Duplicate concurrent nonce." });
+            return;
+        }
+
+        // Canonical Request Verification
         request.EnableBuffering();
         string rawBody;
         using (var reader = new StreamReader(request.Body, Encoding.UTF8, leaveOpen: true))
@@ -72,38 +90,22 @@ public class RequireMerchantSignatureAttribute : Attribute, IAsyncActionFilter
             request.Body.Position = 0;
         }
 
-        // Canonical string: METHOD\nPATH\nTIMESTAMP\nNONCE\nBODY_SHA256
-        var bodyHash = ComputeSha256(rawBody);
-        var canonicalString = $"{request.Method.ToUpperInvariant()}\n{request.Path}\n{timestampStr}\n{nonce}\n{bodyHash}";
+        var bodyHash = Convert.ToHexString(sha.ComputeHash(Encoding.UTF8.GetBytes(rawBody))).ToLowerInvariant();
+        var canonical = $"{request.Method.ToUpperInvariant()}\n{request.Path}\n{timestampEpoch}\n{nonce}\n{bodyHash}";
 
-        // Compute HMAC using merchant's unencrypted secret (simplified for filter demonstration)
-        var expectedSignature = ComputeHmacSha256(canonicalString, merchant.EncryptedApiKeySecret);
+        var secret = protector.Decrypt(merchant.EncryptedApiKeySecret);
+        using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(secret));
+        var expectedSig = Convert.ToHexString(hmac.ComputeHash(Encoding.UTF8.GetBytes(canonical))).ToLowerInvariant();
 
         if (!CryptographicOperations.FixedTimeEquals(
-                Encoding.UTF8.GetBytes(signature.ToLowerInvariant()),
-                Encoding.UTF8.GetBytes(expectedSignature.ToLowerInvariant())))
+            Encoding.UTF8.GetBytes(signature.ToLowerInvariant()),
+            Encoding.UTF8.GetBytes(expectedSig)))
         {
-            context.Result = new UnauthorizedObjectResult(new { error = "Invalid request signature." });
+            context.Result = new UnauthorizedObjectResult(new { error = "Invalid HMAC signature." });
             return;
         }
 
-        // Pass authenticated merchant context
         context.HttpContext.Items["MerchantId"] = merchant.Id;
-
         await next();
-    }
-
-    private static string ComputeSha256(string input)
-    {
-        using var sha256 = SHA256.Create();
-        var bytes = sha256.ComputeHash(Encoding.UTF8.GetBytes(input));
-        return Convert.ToHexString(bytes).ToLowerInvariant();
-    }
-
-    private static string ComputeHmacSha256(string message, string secret)
-    {
-        using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(secret));
-        var bytes = hmac.ComputeHash(Encoding.UTF8.GetBytes(message));
-        return Convert.ToHexString(bytes).ToLowerInvariant();
     }
 }

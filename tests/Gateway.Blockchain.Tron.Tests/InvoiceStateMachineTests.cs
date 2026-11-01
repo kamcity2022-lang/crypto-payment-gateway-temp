@@ -17,6 +17,8 @@ public class InvoiceStateMachineTests
             fiatAmount: 10.0m,
             fiatCurrency: "USD",
             exchangeRate: 1.0m,
+            exchangeRateSource: "DirectPegProvider",
+            exchangeRateTimestampUtc: DateTime.UtcNow,
             expectedAmountUnits: expectedUnits, // 10 USDT
             underpaymentThresholdUnits: underpaymentThreshold,
             callbackUrl: "https://example.com/callback",
@@ -33,7 +35,7 @@ public class InvoiceStateMachineTests
             invoice.Id, "TRON", "0xabc123", 0, "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t",
             "TFromAddress123", invoice.DepositAddress, 10_000_000, 100);
 
-        transfer.UpdateConfirmations(120, 19); // پاس شدن شرط کانفرمیشن
+        transfer.UpdateConfirmations(120, 19);
         invoice.RegisterTransfer(transfer);
 
         invoice.Status.Should().Be(InvoiceStatus.Paid);
@@ -70,7 +72,7 @@ public class InvoiceStateMachineTests
         transfer2.UpdateConfirmations(120, 19);
 
         invoice.RegisterTransfer(transfer1);
-        invoice.RegisterTransfer(transfer2); // واریز تکراری نباید اضافه شود
+        invoice.RegisterTransfer(transfer2);
 
         invoice.Transfers.Should().HaveCount(1);
         invoice.PaidAmountUnits.Should().Be(5_000_000);

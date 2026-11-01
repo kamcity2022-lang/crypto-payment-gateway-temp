@@ -15,10 +15,10 @@ public class SsrfProtectionTests
     [InlineData("169.254.169.254", true)] // AWS/GCP Metadata IP
     [InlineData("8.8.8.8", false)]        // Public Internet IP
     [InlineData("1.1.1.1", false)]
-    public void IsInternalOrReservedIp_ShouldDetectInternalAddresses(string ipString, bool isInternal)
+    public void IsProhibitedIp_ShouldDetectInternalAddresses(string ipString, bool isInternal)
     {
         var ip = IPAddress.Parse(ipString);
-        var result = SsrfValidator.IsInternalOrReservedIp(ip);
+        var result = SsrfValidator.IsProhibitedIp(ip);
 
         result.Should().Be(isInternal);
     }

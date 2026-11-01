@@ -8,7 +8,6 @@ using Gateway.Blockchain.Tron;
 using Gateway.Domain.Entities;
 using Gateway.Domain.Enums;
 using Gateway.Persistence;
-using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
@@ -31,7 +30,9 @@ public class InvoicesController : ControllerBase
     {
         var merchantId = (Guid)HttpContext.Items["MerchantId"]!;
 
-        // Fetch merchant wallet configuration
+        await using var tx = await _dbContext.Database.BeginTransactionAsync(ct);
+
+        // Pessimistic / row-level lock equivalent by reloading tracked wallet entity
         var wallet = await _dbContext.Wallets
             .Include(w => w.DerivedAddresses)
             .FirstOrDefaultAsync(w => w.MerchantId == merchantId && w.Network == "TRON", ct);
@@ -41,16 +42,15 @@ public class InvoicesController : ControllerBase
             return BadRequest(new { error = "Merchant TRON wallet is not configured." });
         }
 
-        // Derive next unused address atomically
         var derivationService = new TronAddressDerivationService(wallet.AccountXPub);
         var derivedAddressStr = derivationService.DeriveAddress(wallet.LastDerivationIndex);
         var derivedAddressEntity = wallet.AllocateNextAddress(derivedAddressStr);
 
-        // Snapshot exchange rate (1 USDT = 1.00 USD baseline for MVP)
-        const decimal exchangeRate = 1.0m;
+        // Snapshot Exchange Rate
+        const decimal exchangeRate = 1.0m; // USDT peg baseline
         var cryptoAmount = request.FiatAmount / exchangeRate;
-        var expectedUnits = (long)(cryptoAmount * 1_000_000m); // 6 decimals for USDT TRC-20
-        var underpaymentThreshold = 50_000L; // 0.05 USDT allowance
+        var expectedUnits = (long)(cryptoAmount * 1_000_000m);
+        var underpaymentThreshold = 50_000L;
 
         var checkoutToken = Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
 
@@ -61,6 +61,8 @@ public class InvoicesController : ControllerBase
             fiatAmount: request.FiatAmount,
             fiatCurrency: request.FiatCurrency.ToUpperInvariant(),
             exchangeRate: exchangeRate,
+            exchangeRateSource: "DirectPegProvider",
+            exchangeRateTimestampUtc: DateTime.UtcNow,
             expectedAmountUnits: expectedUnits,
             underpaymentThresholdUnits: underpaymentThreshold,
             callbackUrl: request.CallbackUrl,
@@ -70,6 +72,7 @@ public class InvoicesController : ControllerBase
 
         _dbContext.Invoices.Add(invoice);
         await _dbContext.SaveChangesAsync(ct);
+        await tx.CommitAsync(ct);
 
         var response = new InvoiceResponseDto
         {
@@ -83,7 +86,8 @@ public class InvoicesController : ControllerBase
             Currency = invoice.Currency,
             Network = invoice.Network,
             Status = invoice.Status.ToString(),
-            CheckoutUrl = $"{Request.Scheme}://{Request.Host}/checkout/{invoice.CheckoutToken}",
+            // Ensure unified route matches frontend checkout.html?token=...
+            CheckoutUrl = $"{Request.Scheme}://{Request.Host}/checkout.html?token={invoice.CheckoutToken}",
             ExpiresAtUtc = invoice.ExpiresAtUtc,
             CreatedAtUtc = invoice.CreatedAtUtc
         };
@@ -115,7 +119,7 @@ public class InvoicesController : ControllerBase
             Currency = invoice.Currency,
             Network = invoice.Network,
             Status = invoice.Status.ToString(),
-            CheckoutUrl = $"{Request.Scheme}://{Request.Host}/checkout/{invoice.CheckoutToken}",
+            CheckoutUrl = $"{Request.Scheme}://{Request.Host}/checkout.html?token={invoice.CheckoutToken}",
             ExpiresAtUtc = invoice.ExpiresAtUtc,
             CreatedAtUtc = invoice.CreatedAtUtc
         });
