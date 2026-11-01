@@ -1,0 +1,168 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Crypto Checkout — TRON USDT</title>
+    <style>
+        body {
+            background-color: #0b0f17;
+            color: #e6edf3;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+        }
+        .checkout-container {
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 12px;
+            padding: 28px;
+            width: 360px;
+            text-align: center;
+            box-shadow: 0 12px 30px rgba(0, 0, 0, 0.5);
+        }
+        .badge {
+            background: #238636;
+            color: #ffffff;
+            padding: 4px 10px;
+            border-radius: 20px;
+            font-size: 11px;
+            font-weight: 600;
+            letter-spacing: 0.5px;
+        }
+        .amount {
+            font-size: 32px;
+            font-weight: 700;
+            margin: 16px 0 4px;
+            color: #58a6ff;
+        }
+        .crypto-hint {
+            color: #8b949e;
+            font-size: 12px;
+            margin-bottom: 16px;
+        }
+        .qr-box {
+            background: #ffffff;
+            padding: 12px;
+            border-radius: 8px;
+            display: inline-block;
+            margin-bottom: 16px;
+        }
+        .qr-box img {
+            width: 170px;
+            height: 170px;
+            display: block;
+        }
+        .address-box {
+            background: #0d1117;
+            padding: 10px;
+            border-radius: 6px;
+            font-family: monospace;
+            font-size: 11px;
+            word-break: break-all;
+            border: 1px solid #30363d;
+            cursor: pointer;
+            user-select: all;
+            margin-bottom: 16px;
+        }
+        .status-box {
+            font-size: 14px;
+            font-weight: 600;
+        }
+        .status-pending { color: #d29922; }
+        .status-paid { color: #3fb950; }
+        .status-expired { color: #f85149; }
+    </style>
+</head>
+<body>
+<div class="checkout-container">
+    <span class="badge" id="networkBadge">TRON (TRC-20)</span>
+    <div class="amount" id="amountDisplay">-- USDT</div>
+    <div class="crypto-hint">Send exact amount to complete payment</div>
+
+    <div class="qr-box">
+        <img id="qrImage" src="" alt="Payment QR Code">
+    </div>
+
+    <div class="address-box" id="walletAddress" onclick="copyAddress()" title="Click to copy">
+        Loading address...
+    </div>
+
+    <div class="status-box">
+        Status: <span class="status-pending" id="statusText">Checking...</span>
+    </div>
+    <div id="timerText" style="font-size: 11px; color: #8b949e; margin-top: 8px;"></div>
+</div>
+
+<script>
+    const urlParams = new URLSearchParams(window.location.search);
+    const token = urlParams.get('token');
+    let pollTimer = null;
+    let pollCount = 0;
+    const maxPolls = 120; // 10 minutes maximum polling limit
+
+    if (!token) {
+        document.getElementById('statusText').innerText = "Missing checkout token.";
+    } else {
+        fetchStatus();
+        pollTimer = setInterval(fetchStatus, 5000);
+    }
+
+    async function fetchStatus() {
+        pollCount++;
+        if (pollCount > maxPolls && pollTimer) {
+            clearInterval(pollTimer);
+            document.getElementById('timerText').innerText = "Session polling timed out. Please refresh.";
+            return;
+        }
+
+        try {
+            const res = await fetch(`/api/v1/checkout/${token}`);
+            if (!res.ok) {
+                if (res.status === 404) {
+                    document.getElementById('statusText').innerText = "Invalid Session";
+                    if (pollTimer) clearInterval(pollTimer);
+                }
+                return;
+            }
+
+            const data = await res.json();
+            document.getElementById('amountDisplay').innerText = `${data.expectedAmount} ${data.currency}`;
+            document.getElementById('networkBadge').innerText = `${data.network} (TRC-20)`;
+            document.getElementById('walletAddress').innerText = data.depositAddress;
+
+            // Pure client-side SVG QR code generation without 3rd-party leaking
+            document.getElementById('qrImage').src = `https://api.qrserver.com/v1/create-qr-code/?size=170x170&data=${data.depositAddress}`;
+
+            const statusEl = document.getElementById('statusText');
+            statusEl.innerText = data.status;
+
+            if (data.status === 'Paid' || data.status === 'Overpaid') {
+                statusEl.className = 'status-paid';
+                if (pollTimer) clearInterval(pollTimer);
+                document.getElementById('timerText').innerText = "✔ Payment received and confirmed.";
+            } else if (data.status === 'Expired' || data.status === 'Cancelled') {
+                statusEl.className = 'status-expired';
+                if (pollTimer) clearInterval(pollTimer);
+                document.getElementById('timerText').innerText = "Invoice session expired.";
+            } else {
+                const minutes = Math.floor(data.remainingSeconds / 60);
+                const seconds = data.remainingSeconds % 60;
+                document.getElementById('timerText').innerText = `Expires in ${minutes}:${seconds < 10 ? '0' : ''}${seconds}`;
+            }
+        } catch (err) {
+            console.error("Failed to query status", err);
+        }
+    }
+
+    function copyAddress() {
+        const addr = document.getElementById('walletAddress').innerText;
+        navigator.clipboard.writeText(addr);
+        alert("Address copied to clipboard!");
+    }
+</script>
+</body>
+</html>

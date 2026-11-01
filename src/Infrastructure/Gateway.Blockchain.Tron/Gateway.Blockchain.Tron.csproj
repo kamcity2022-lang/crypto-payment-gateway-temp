@@ -3,6 +3,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\Core\Gateway.Application\Gateway.Application.csproj" />
     <ProjectReference Include="..\..\Core\Gateway.Domain\Gateway.Domain.csproj" />
+    <ProjectReference Include="..\Gateway.Persistence\Gateway.Persistence.csproj" />
   </ItemGroup>
 
   <ItemGroup>
