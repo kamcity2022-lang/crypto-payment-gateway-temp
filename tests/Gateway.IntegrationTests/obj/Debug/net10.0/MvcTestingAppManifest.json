@@ -1,0 +1,8 @@
+{
+  "Gateway.Api, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null": "C:\\Dev\\PersonalProjects\\CryptoPaymentGateway\\CryptoPaymentGateway\\src\\Presentation\\Gateway.Api",
+  "Gateway.Application, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null": "C:\\Dev\\PersonalProjects\\CryptoPaymentGateway\\CryptoPaymentGateway\\src\\Core\\Gateway.Application",
+  "Gateway.Blockchain.Tron, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null": "C:\\Dev\\PersonalProjects\\CryptoPaymentGateway\\CryptoPaymentGateway\\src\\Infrastructure\\Gateway.Blockchain.Tron",
+  "Gateway.Domain, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null": "C:\\Dev\\PersonalProjects\\CryptoPaymentGateway\\CryptoPaymentGateway\\src\\Core\\Gateway.Domain",
+  "Gateway.Infrastructure, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null": "C:\\Dev\\PersonalProjects\\CryptoPaymentGateway\\CryptoPaymentGateway\\src\\Infrastructure\\Gateway.Infrastructure",
+  "Gateway.Persistence, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null": "C:\\Dev\\PersonalProjects\\CryptoPaymentGateway\\CryptoPaymentGateway\\src\\Infrastructure\\Gateway.Persistence"
+}

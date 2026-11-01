@@ -1,0 +1,17 @@
+C:\Dev\PersonalProjects\CryptoPaymentGateway\CryptoPaymentGateway\src\Infrastructure\Gateway.Blockchain.Tron\bin\Debug\net10.0\Gateway.Blockchain.Tron.deps.json
+C:\Dev\PersonalProjects\CryptoPaymentGateway\CryptoPaymentGateway\src\Infrastructure\Gateway.Blockchain.Tron\bin\Debug\net10.0\Gateway.Blockchain.Tron.dll
+C:\Dev\PersonalProjects\CryptoPaymentGateway\CryptoPaymentGateway\src\Infrastructure\Gateway.Blockchain.Tron\bin\Debug\net10.0\Gateway.Blockchain.Tron.pdb
+C:\Dev\PersonalProjects\CryptoPaymentGateway\CryptoPaymentGateway\src\Infrastructure\Gateway.Blockchain.Tron\bin\Debug\net10.0\Gateway.Application.dll
+C:\Dev\PersonalProjects\CryptoPaymentGateway\CryptoPaymentGateway\src\Infrastructure\Gateway.Blockchain.Tron\bin\Debug\net10.0\Gateway.Domain.dll
+C:\Dev\PersonalProjects\CryptoPaymentGateway\CryptoPaymentGateway\src\Infrastructure\Gateway.Blockchain.Tron\bin\Debug\net10.0\Gateway.Application.pdb
+C:\Dev\PersonalProjects\CryptoPaymentGateway\CryptoPaymentGateway\src\Infrastructure\Gateway.Blockchain.Tron\bin\Debug\net10.0\Gateway.Domain.pdb
+C:\Dev\PersonalProjects\CryptoPaymentGateway\CryptoPaymentGateway\src\Infrastructure\Gateway.Blockchain.Tron\obj\Debug\net10.0\Gateway.Blockchain.Tron.csproj.AssemblyReference.cache
+C:\Dev\PersonalProjects\CryptoPaymentGateway\CryptoPaymentGateway\src\Infrastructure\Gateway.Blockchain.Tron\obj\Debug\net10.0\Gateway.Blockchain.Tron.GeneratedMSBuildEditorConfig.editorconfig
+C:\Dev\PersonalProjects\CryptoPaymentGateway\CryptoPaymentGateway\src\Infrastructure\Gateway.Blockchain.Tron\obj\Debug\net10.0\Gateway.Blockchain.Tron.AssemblyInfoInputs.cache
+C:\Dev\PersonalProjects\CryptoPaymentGateway\CryptoPaymentGateway\src\Infrastructure\Gateway.Blockchain.Tron\obj\Debug\net10.0\Gateway.Blockchain.Tron.AssemblyInfo.cs
+C:\Dev\PersonalProjects\CryptoPaymentGateway\CryptoPaymentGateway\src\Infrastructure\Gateway.Blockchain.Tron\obj\Debug\net10.0\Gateway.Blockchain.Tron.csproj.CoreCompileInputs.cache
+C:\Dev\PersonalProjects\CryptoPaymentGateway\CryptoPaymentGateway\src\Infrastructure\Gateway.Blockchain.Tron\obj\Debug\net10.0\Gateway..3BD04932.Up2Date
+C:\Dev\PersonalProjects\CryptoPaymentGateway\CryptoPaymentGateway\src\Infrastructure\Gateway.Blockchain.Tron\obj\Debug\net10.0\Gateway.Blockchain.Tron.dll
+C:\Dev\PersonalProjects\CryptoPaymentGateway\CryptoPaymentGateway\src\Infrastructure\Gateway.Blockchain.Tron\obj\Debug\net10.0\refint\Gateway.Blockchain.Tron.dll
+C:\Dev\PersonalProjects\CryptoPaymentGateway\CryptoPaymentGateway\src\Infrastructure\Gateway.Blockchain.Tron\obj\Debug\net10.0\Gateway.Blockchain.Tron.pdb
+C:\Dev\PersonalProjects\CryptoPaymentGateway\CryptoPaymentGateway\src\Infrastructure\Gateway.Blockchain.Tron\obj\Debug\net10.0\ref\Gateway.Blockchain.Tron.dll

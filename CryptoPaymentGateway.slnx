@@ -1,0 +1,21 @@
+<Solution>
+  <Folder Name="/src/" />
+  <Folder Name="/src/Core/">
+    <Project Path="src/Core/Gateway.Application/Gateway.Application.csproj" />
+    <Project Path="src/Core/Gateway.Domain/Gateway.Domain.csproj" />
+  </Folder>
+  <Folder Name="/src/Infrastructure/">
+    <Project Path="src/Infrastructure/Gateway.Blockchain.Tron/Gateway.Blockchain.Tron.csproj" />
+    <Project Path="src/Infrastructure/Gateway.Infrastructure/Gateway.Infrastructure.csproj" />
+    <Project Path="src/Infrastructure/Gateway.Persistence/Gateway.Persistence.csproj" />
+  </Folder>
+  <Folder Name="/src/Presentation/">
+    <Project Path="src/Presentation/Gateway.Api/Gateway.Api.csproj" />
+    <Project Path="src/Presentation/Gateway.Worker/Gateway.Worker.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Gateway.Blockchain.Tron.Tests/Gateway.Blockchain.Tron.Tests.csproj" />
+    <Project Path="tests/Gateway.Domain.Tests/Gateway.Domain.Tests.csproj" />
+    <Project Path="tests/Gateway.IntegrationTests/Gateway.IntegrationTests.csproj" />
+  </Folder>
+</Solution>
