@@ -1,0 +1,37 @@
+## Build and Binary Output Directories
+bin/
+obj/
+out/
+build/
+
+## Visual Studio & IDEs
+.vs/
+.idea/
+.vscode/
+*.user
+*.userosscache
+*.suo
+*.userprefs
+*.sln.docstates
+
+## Test Results and Coverage
+TestResults/
+[Tt]est[Rr]esult*
+*.trx
+coverage/
+
+## Environment and Secrets
+*.env
+*.env.*
+*.pfx
+*.key
+
+## OS Generated Files
+[Dd]esktop.ini
+Thumbs.db
+.DS_Store
+
+## Database & Local Storage (if applicable)
+*.sqlite
+*.db-shm
+*.db-wal
