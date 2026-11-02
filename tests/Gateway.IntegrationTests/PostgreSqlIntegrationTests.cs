@@ -24,10 +24,7 @@ namespace Gateway.IntegrationTests;
 public class PostgreSqlIntegrationTests : IAsyncLifetime
 {
     private readonly PostgreSqlContainer _dbContainer = new PostgreSqlBuilder("postgres:16-alpine")
-        .WithDatabase("test_gateway_db")
-        .WithUsername("postgres")
-        .WithPassword("postgres_test_password")
-        .Build();
+        .WithDatabase("test_gateway_db").WithUsername("postgres").WithPassword("postgres_test_password").Build();
 
     private WireMockServer _wireMockServer = null!;
     private GatewayDbContext _dbContext = null!;
@@ -37,24 +34,12 @@ public class PostgreSqlIntegrationTests : IAsyncLifetime
     public async Task InitializeAsync()
     {
         await _dbContainer.StartAsync();
-        
-        // Start WireMock listening explicitly on IPv4 loopback
         _wireMockServer = WireMockServer.Start();
-
         _configuration = new ConfigurationBuilder()
-            .AddInMemoryCollection(new[]
-            {
-                new KeyValuePair<string, string?>("Security:MasterEncryptionKey", "0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF"),
-                new KeyValuePair<string, string?>("Testing:AllowLoopbackWebhooks", "true")
-            })
+            .AddInMemoryCollection(new[] { new KeyValuePair<string, string?>("Security:MasterEncryptionKey", "0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF") })
             .Build();
-
         _secretProtector = new AesGcmSecretProtector(_configuration);
-
-        var options = new DbContextOptionsBuilder<GatewayDbContext>()
-            .UseNpgsql(_dbContainer.GetConnectionString())
-            .Options;
-
+        var options = new DbContextOptionsBuilder<GatewayDbContext>().UseNpgsql(_dbContainer.GetConnectionString()).Options;
         _dbContext = new GatewayDbContext(options);
         await _dbContext.Database.MigrateAsync();
     }
@@ -72,40 +57,23 @@ public class PostgreSqlIntegrationTests : IAsyncLifetime
     {
         var rawWebhookSecret = "whsec_test_secret_1234567890";
         var encryptedSecret = _secretProtector.Encrypt(rawWebhookSecret);
-
-        _wireMockServer
-            .Given(Request.Create().WithPath("/webhook-test").UsingPost())
-            .RespondWith(Response.Create()
-                .WithStatusCode(HttpStatusCode.OK)
-                .WithBody("{\"status\":\"ok\"}"));
-
+        _wireMockServer.Given(Request.Create().WithPath("/webhook-test").UsingPost())
+            .RespondWith(Response.Create().WithStatusCode(HttpStatusCode.OK).WithBody("{\"status\":\"ok\"}"));
+        
         var destinationUrl = $"http://127.0.0.1:{_wireMockServer.Port}/webhook-test";
-
-        var outbox = new OutboxEvent(
-            Guid.NewGuid(),
-            "invoice.paid",
-            "{\"invoiceId\":\"123\",\"status\":\"Paid\"}",
-            destinationUrl,
-            encryptedSecret
-        );
-
+        var outbox = new OutboxEvent(Guid.NewGuid(), "invoice.paid", "{\"invoiceId\":\"123\",\"status\":\"Paid\"}", destinationUrl, encryptedSecret);
+        
         _dbContext.OutboxEvents.Add(outbox);
         await _dbContext.SaveChangesAsync();
-
-        await _dbContext.Database.ExecuteSqlInterpolatedAsync(
-            $"UPDATE \"OutboxEvents\" SET \"NextAttemptAtUtc\" = {DateTime.UtcNow.AddMinutes(-5)} WHERE \"Id\" = {outbox.Id}");
-
+        await _dbContext.Database.ExecuteSqlInterpolatedAsync($"UPDATE \"OutboxEvents\" SET \"NextAttemptAtUtc\" = {DateTime.UtcNow.AddMinutes(-5)} WHERE \"Id\" = {outbox.Id}");
+        
         using var httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
-        var dispatcher = new WebhookDispatcher(_dbContext, httpClient, _secretProtector, NullLogger<WebhookDispatcher>.Instance, _configuration);
-
+        var dispatcher = new WebhookDispatcher(_dbContext, httpClient, _secretProtector, NullLogger<WebhookDispatcher>.Instance);
         await dispatcher.DispatchPendingWebhooksAsync(CancellationToken.None);
-
-        var refreshed = await _dbContext.OutboxEvents
-            .AsNoTracking()
-            .FirstOrDefaultAsync(o => o.Id == outbox.Id);
-
+        
+        var refreshed = await _dbContext.OutboxEvents.AsNoTracking().FirstOrDefaultAsync(o => o.Id == outbox.Id);
         refreshed.Should().NotBeNull();
-        refreshed!.LastError.Should().BeNull(because: $"Dispatch should not record an error, but encountered: {refreshed.LastError}");
+        refreshed!.LastError.Should().BeNull();
         refreshed.IsProcessed.Should().BeTrue();
     }
 
@@ -114,99 +82,101 @@ public class PostgreSqlIntegrationTests : IAsyncLifetime
     {
         var rawWebhookSecret = "whsec_test_secret_1234567890";
         var encryptedSecret = _secretProtector.Encrypt(rawWebhookSecret);
-
         _wireMockServer.Reset();
-        _wireMockServer
-            .Given(Request.Create().WithPath("/webhook-concurrent").UsingPost())
-            .RespondWith(Response.Create()
-                .WithStatusCode(HttpStatusCode.OK)
-                .WithBody("{\"status\":\"ok\"}"));
-
+        _wireMockServer.Given(Request.Create().WithPath("/webhook-concurrent").UsingPost())
+            .RespondWith(Response.Create().WithStatusCode(HttpStatusCode.OK).WithBody("{\"status\":\"ok\"}"));
+        
         var destinationUrl = $"http://127.0.0.1:{_wireMockServer.Port}/webhook-concurrent";
-
-        var outbox = new OutboxEvent(
-            Guid.NewGuid(),
-            "invoice.paid",
-            "{\"invoiceId\":\"456\",\"status\":\"Paid\"}",
-            destinationUrl,
-            encryptedSecret
-        );
-
+        var outbox = new OutboxEvent(Guid.NewGuid(), "invoice.paid", "{\"invoiceId\":\"456\",\"status\":\"Paid\"}", destinationUrl, encryptedSecret);
+        
         _dbContext.OutboxEvents.Add(outbox);
         await _dbContext.SaveChangesAsync();
-
-        await _dbContext.Database.ExecuteSqlInterpolatedAsync(
-            $"UPDATE \"OutboxEvents\" SET \"NextAttemptAtUtc\" = {DateTime.UtcNow.AddMinutes(-5)} WHERE \"Id\" = {outbox.Id}");
-
+        await _dbContext.Database.ExecuteSqlInterpolatedAsync($"UPDATE \"OutboxEvents\" SET \"NextAttemptAtUtc\" = {DateTime.UtcNow.AddMinutes(-5)} WHERE \"Id\" = {outbox.Id}");
+        
         using var client1 = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
         using var client2 = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
-
-        var options = new DbContextOptionsBuilder<GatewayDbContext>()
-            .UseNpgsql(_dbContainer.GetConnectionString())
-            .Options;
-
+        var options = new DbContextOptionsBuilder<GatewayDbContext>().UseNpgsql(_dbContainer.GetConnectionString()).Options;
         await using var db1 = new GatewayDbContext(options);
         await using var db2 = new GatewayDbContext(options);
-
-        var dispatcher1 = new WebhookDispatcher(db1, client1, _secretProtector, NullLogger<WebhookDispatcher>.Instance, _configuration);
-        var dispatcher2 = new WebhookDispatcher(db2, client2, _secretProtector, NullLogger<WebhookDispatcher>.Instance, _configuration);
-
+        
+        var dispatcher1 = new WebhookDispatcher(db1, client1, _secretProtector, NullLogger<WebhookDispatcher>.Instance);
+        var dispatcher2 = new WebhookDispatcher(db2, client2, _secretProtector, NullLogger<WebhookDispatcher>.Instance);
+        
         await Task.WhenAll(
             dispatcher1.DispatchPendingWebhooksAsync(CancellationToken.None),
             dispatcher2.DispatchPendingWebhooksAsync(CancellationToken.None)
         );
-
+        
         await using var verifyDb = new GatewayDbContext(options);
         var refreshed = await verifyDb.OutboxEvents.AsNoTracking().FirstOrDefaultAsync(o => o.Id == outbox.Id);
-
         refreshed.Should().NotBeNull();
         refreshed!.IsProcessed.Should().BeTrue();
         refreshed.AttemptCount.Should().Be(1);
-
-        // Assert exactly one HTTP request was received by WireMock
+        
         var receivedRequests = _wireMockServer.LogEntries;
         receivedRequests.Should().HaveCount(1);
-
         var request = receivedRequests.First().RequestMessage;
-        request.Headers.Should().ContainKey("X-CryptoGateway-Signature");
-        request.Headers.Should().ContainKey("X-CryptoGateway-Timestamp");
-        request.Headers.Should().ContainKey("X-CryptoGateway-Event-Id");
-
-        // Verify HMAC signature
+        
+        var receivedBodyBytes = request.BodyData?.BodyAsBytes ?? Array.Empty<byte>();
+        var expectedBodyBytes = System.Text.Encoding.UTF8.GetBytes(outbox.Payload);
+        receivedBodyBytes.Should().BeEquivalentTo(expectedBodyBytes);
+        
         var timestamp = request.Headers["X-CryptoGateway-Timestamp"].First();
         var signature = request.Headers["X-CryptoGateway-Signature"].First();
-        var payloadToSign = $"{timestamp}.{outbox.Payload}";
+        var eventId = request.Headers["X-CryptoGateway-Event-Id"].First();
+        
+        var payloadToSign = $"{timestamp}.{System.Text.Encoding.UTF8.GetString(receivedBodyBytes)}";
         var expectedSig = WebhookDispatcher.ComputeHmacSha256(payloadToSign, rawWebhookSecret);
-
+        
         signature.Should().Be(expectedSig);
+        eventId.Should().Be(outbox.Id.ToString());
     }
 
     [Fact]
     public async Task CheckoutExpiration_Persistence_ShouldUpdateDatabase()
     {
-        var invoice = new Invoice(
-            Guid.NewGuid(),
-            Guid.NewGuid(),
-            "TDepositAddress123",
-            10.0m,
-            "USD",
-            1.0m,
-            "DirectPeg",
-            DateTime.UtcNow,
-            10_000_000L,
-            50_000L,
-            "https://test.com/cb",
-            "token-xyz-123",
-            TimeSpan.FromSeconds(-10) // Already expired
-        );
-
+        var invoice = new Invoice(Guid.NewGuid(), Guid.NewGuid(), "TDepositAddress123", 10.0m, "USD", 1.0m, "DirectPeg", DateTime.UtcNow, 10_000_000L, 50_000L, "https://test.com/cb", "token-xyz-123", TimeSpan.FromSeconds(-10));
         _dbContext.Invoices.Add(invoice);
         await _dbContext.SaveChangesAsync();
-
         invoice.EvaluateStatus();
         await _dbContext.SaveChangesAsync();
-
         var fromDb = await _dbContext.Invoices.AsNoTracking().FirstOrDefaultAsync(i => i.Id == invoice.Id);
         fromDb!.Status.Should().Be(InvoiceStatus.Expired);
+    }
+
+    [Fact]
+    public async Task OutboxDispatcher_RedirectResponse_ShouldNotFollowAndReject()
+    {
+        var rawWebhookSecret = "whsec_test_secret_redirect";
+        var encryptedSecret = _secretProtector.Encrypt(rawWebhookSecret);
+        _wireMockServer.Reset();
+        
+        _wireMockServer.Given(Request.Create().WithPath("/webhook-redirect").UsingPost())
+            .RespondWith(Response.Create().WithStatusCode(HttpStatusCode.Redirect).WithHeader("Location", $"http://127.0.0.1:{_wireMockServer.Port}/webhook-final"));
+        _wireMockServer.Given(Request.Create().WithPath("/webhook-final").UsingPost())
+            .RespondWith(Response.Create().WithStatusCode(HttpStatusCode.OK));
+        
+        var destinationUrl = $"http://127.0.0.1:{_wireMockServer.Port}/webhook-redirect";
+        var outbox = new OutboxEvent(Guid.NewGuid(), "invoice.paid", "{\"redirect\":true}", destinationUrl, encryptedSecret);
+        
+        _dbContext.OutboxEvents.Add(outbox);
+        await _dbContext.SaveChangesAsync();
+        await _dbContext.Database.ExecuteSqlInterpolatedAsync($"UPDATE \"OutboxEvents\" SET \"NextAttemptAtUtc\" = {DateTime.UtcNow.AddMinutes(-5)} WHERE \"Id\" = {outbox.Id}");
+        
+        using var httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
+        var options = new DbContextOptionsBuilder<GatewayDbContext>().UseNpgsql(_dbContainer.GetConnectionString()).Options;
+        await using var db = new GatewayDbContext(options);
+        var dispatcher = new WebhookDispatcher(db, httpClient, _secretProtector, NullLogger<WebhookDispatcher>.Instance);
+        
+        await dispatcher.DispatchPendingWebhooksAsync(CancellationToken.None);
+        
+        var refreshed = await db.OutboxEvents.AsNoTracking().FirstOrDefaultAsync(o => o.Id == outbox.Id);
+        refreshed.Should().NotBeNull();
+        refreshed!.IsProcessed.Should().BeFalse();
+        refreshed.LastError.Should().Contain("redirect");
+        
+        var receivedRequests = _wireMockServer.LogEntries;
+        receivedRequests.Should().HaveCount(1);
+        receivedRequests.First().RequestMessage.Path.Should().Be("/webhook-redirect");
     }
 }

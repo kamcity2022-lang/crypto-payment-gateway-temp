@@ -1,6 +1,171 @@
-﻿namespace Gateway.Blockchain.Tron.Tests;
+﻿using System;
+using System.Net;
+using System.Net.Http;
+using System.Text.Json;
+using System.Threading;
+using System.Threading.Tasks;
+using FluentAssertions;
+using Gateway.Blockchain.Tron;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging.Abstractions;
+using Xunit;
+
+namespace Gateway.Blockchain.Tron.Tests;
 
 public class TronScannerVerificationTests
 {
-    
+    private const string UsdtContract = "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t";
+    private const string DepositAddress = "TJvWjs5S78a7W3Yb5vDqS3gJzX5hD2K8Ym";
+    private const string TxHash = "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef";
+
+    // یک HttpMessageHandler ساده برای شبیه‌سازی پاسخ‌های HTTP بدون نیاز به کتابخانه خارجی
+    private class MockHttpMessageHandler : HttpMessageHandler
+    {
+        private readonly HttpResponseMessage _response;
+        public MockHttpMessageHandler(HttpResponseMessage response) => _response = response;
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+            => Task.FromResult(_response);
+    }
+
+    private TronScannerService CreateService(HttpResponseMessage response)
+    {
+        var handler = new MockHttpMessageHandler(response);
+        var httpClient = new HttpClient(handler);
+        var config = new ConfigurationBuilder()
+            .AddInMemoryCollection(new[] { new System.Collections.Generic.KeyValuePair<string, string?>("Tron:UsdtContractAddress", UsdtContract) })
+            .Build();
+        return new TronScannerService(null!, httpClient, config, NullLogger<TronScannerService>.Instance);
+    }
+
+    private string BuildSolidityNodeResponse(bool success, string contractHex, string recipientHex, string amountHex)
+    {
+        var log = new
+        {
+            address = contractHex,
+            topics = new[]
+            {
+                "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
+                "0x0000000000000000000000000000000000000000000000000000000000000000",
+                "0x000000000000000000000000" + recipientHex
+            },
+            data = "0x" + amountHex
+        };
+        return JsonSerializer.Serialize(new { blockNumber = 123456, receipt = new { result = success ? "SUCCESS" : "FAILED" }, log = new[] { log } });
+    }
+
+    [Fact]
+    public async Task VerifySolidifiedTransaction_CorrectEvent_ShouldSucceed()
+    {
+        var expectedAmount = 10_000_000L;
+        var amountHex = expectedAmount.ToString("x").PadLeft(64, '0');
+        var contractHex = TronAddressToHexTest(UsdtContract);
+        var recipientHex = TronAddressToHexTest(DepositAddress);
+        var responseBody = BuildSolidityNodeResponse(true, contractHex, recipientHex, amountHex);
+
+        var service = CreateService(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(responseBody) });
+        var result = await service.VerifySolidifiedTransactionAsync(TxHash, DepositAddress, expectedAmount, 0, CancellationToken.None);
+
+        result.IsSolidified.Should().BeTrue();
+        result.IsSuccess.Should().BeTrue();
+        result.BlockNumber.Should().Be(123456);
+    }
+
+    [Fact]
+    public async Task VerifySolidifiedTransaction_WrongRecipient_ShouldFail()
+    {
+        var expectedAmount = 10_000_000L;
+        var amountHex = expectedAmount.ToString("x").PadLeft(64, '0');
+        var contractHex = TronAddressToHexTest(UsdtContract);
+        var wrongRecipient = "0000000000000000000000000000000000000000";
+        var responseBody = BuildSolidityNodeResponse(true, contractHex, wrongRecipient, amountHex);
+
+        var service = CreateService(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(responseBody) });
+        var result = await service.VerifySolidifiedTransactionAsync(TxHash, DepositAddress, expectedAmount, 0, CancellationToken.None);
+
+        result.IsSuccess.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task VerifySolidifiedTransaction_WrongContract_ShouldFail()
+    {
+        var expectedAmount = 10_000_000L;
+        var amountHex = expectedAmount.ToString("x").PadLeft(64, '0');
+        var wrongContract = "0000000000000000000000000000000000000000";
+        var recipientHex = TronAddressToHexTest(DepositAddress);
+        var responseBody = BuildSolidityNodeResponse(true, wrongContract, recipientHex, amountHex);
+
+        var service = CreateService(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(responseBody) });
+        var result = await service.VerifySolidifiedTransactionAsync(TxHash, DepositAddress, expectedAmount, 0, CancellationToken.None);
+
+        result.IsSuccess.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task VerifySolidifiedTransaction_FailedReceipt_ShouldFail()
+    {
+        var expectedAmount = 10_000_000L;
+        var amountHex = expectedAmount.ToString("x").PadLeft(64, '0');
+        var contractHex = TronAddressToHexTest(UsdtContract);
+        var recipientHex = TronAddressToHexTest(DepositAddress);
+        var responseBody = BuildSolidityNodeResponse(false, contractHex, recipientHex, amountHex);
+
+        var service = CreateService(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(responseBody) });
+        var result = await service.VerifySolidifiedTransactionAsync(TxHash, DepositAddress, expectedAmount, 0, CancellationToken.None);
+
+        result.IsSuccess.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task VerifySolidifiedTransaction_AmbiguousMultipleMatches_ShouldFail()
+    {
+        var expectedAmount = 10_000_000L;
+        var amountHex = expectedAmount.ToString("x").PadLeft(64, '0');
+        var contractHex = TronAddressToHexTest(UsdtContract);
+        var recipientHex = TronAddressToHexTest(DepositAddress);
+
+        var log = new
+        {
+            address = contractHex,
+            topics = new[]
+            {
+                "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
+                "0x0000000000000000000000000000000000000000000000000000000000000000",
+                "0x000000000000000000000000" + recipientHex
+            },
+            data = "0x" + amountHex
+        };
+        var responseBody = JsonSerializer.Serialize(new { blockNumber = 123456, receipt = new { result = "SUCCESS" }, log = new[] { log, log } });
+
+        var service = CreateService(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(responseBody) });
+        var result = await service.VerifySolidifiedTransactionAsync(TxHash, DepositAddress, expectedAmount, 0, CancellationToken.None);
+
+        result.IsSuccess.Should().BeFalse();
+    }
+
+    private static string TronAddressToHexTest(string base58Address)
+    {
+        var bytes = Base58CheckDecodeTest(base58Address);
+        return Convert.ToHexString(bytes.AsSpan(1)).ToLowerInvariant();
+    }
+
+    private static byte[] Base58CheckDecodeTest(string base58)
+    {
+        const string alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+        var intData = System.Numerics.BigInteger.Zero;
+        for (var i = 0; i < base58.Length; i++)
+        {
+            var index = alphabet.IndexOf(base58[i]);
+            if (index < 0) throw new FormatException();
+            intData = intData * 58 + index;
+        }
+        var bytes = intData.ToByteArray(isUnsigned: true, isBigEndian: true);
+        var leadingZeros = 0;
+        for (var i = 0; i < base58.Length && base58[i] == '1'; i++) leadingZeros++;
+        var result = new byte[leadingZeros + bytes.Length];
+        Buffer.BlockCopy(bytes, 0, result, leadingZeros, bytes.Length);
+        var payload = new byte[result.Length - 4];
+        Buffer.BlockCopy(result, 0, payload, 0, payload.Length);
+        return payload;
+    }
 }

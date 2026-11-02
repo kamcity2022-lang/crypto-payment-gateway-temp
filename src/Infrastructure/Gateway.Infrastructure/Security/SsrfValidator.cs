@@ -8,43 +8,33 @@ public static class SsrfValidator
 {
     public static bool IsDestinationSafe(string urlString, bool allowHttp = false, bool allowLoopbackForTesting = false)
     {
-        if (!Uri.TryCreate(urlString, UriKind.Absolute, out var uri))
-            return false;
-
-        // Production strictly requires HTTPS
-        if (uri.Scheme != Uri.UriSchemeHttps && (!allowHttp || uri.Scheme != Uri.UriSchemeHttp))
-            return false;
-
-        if (!allowLoopbackForTesting && uri.IsLoopback)
-            return false;
+        if (!Uri.TryCreate(urlString, UriKind.Absolute, out var uri)) return false;
+        if (uri.Scheme != Uri.UriSchemeHttps && (!allowHttp || uri.Scheme != Uri.UriSchemeHttp)) return false;
+        if (!allowLoopbackForTesting && uri.IsLoopback) return false;
 
         try
         {
             var ips = Dns.GetHostAddresses(uri.DnsSafeHost);
             if (ips.Length == 0) return false;
-
             foreach (var ip in ips)
             {
-                if (allowLoopbackForTesting && IPAddress.IsLoopback(ip))
-                    continue;
-
-                if (IsProhibitedIp(ip))
-                    return false;
+                if (allowLoopbackForTesting && IPAddress.IsLoopback(ip)) continue;
+                if (IsProhibitedIp(ip)) return false;
             }
             return true;
         }
-        catch
-        {
-            return false;
-        }
+        catch { return false; }
     }
 
     public static bool IsProhibitedIp(IPAddress ip)
     {
-        if (ip.IsIPv4MappedToIPv6)
-            ip = ip.MapToIPv4();
-
-        if (IPAddress.IsLoopback(ip)) return true;
+        if (ip.IsIPv4MappedToIPv6) ip = ip.MapToIPv4();
+        
+        // IsLoopback is a static method
+        if (IPAddress.IsLoopback(ip)) return true; 
+        
+        // IsIPv6SiteLocal, IsIPv6LinkLocal, IsIPv6Multicast are instance properties!
+        if (ip.IsIPv6SiteLocal) return true; 
 
         if (ip.AddressFamily == AddressFamily.InterNetwork)
         {
@@ -60,12 +50,10 @@ public static class SsrfValidator
         else if (ip.AddressFamily == AddressFamily.InterNetworkV6)
         {
             if (ip.Equals(IPAddress.IPv6Loopback) || ip.Equals(IPAddress.IPv6None)) return true;
-            if (ip.IsIPv6LinkLocal || ip.IsIPv6SiteLocal || ip.IsIPv6Multicast) return true;
-
+            if (ip.IsIPv6LinkLocal || ip.IsIPv6Multicast) return true;
             var b = ip.GetAddressBytes();
             if ((b[0] & 0xfe) == 0xfc) return true; // ULA fc00::/7
         }
-
         return false;
     }
 }
