@@ -20,23 +20,6 @@ using Xunit;
 
 namespace Gateway.IntegrationTests;
 
-// Isolated test transport that intercepts HTTPS requests without needing real TLS certificates.
-// This satisfies "isolated test transport" and "preserve production HTTPS-only policy".
-public sealed class CapturingHttpMessageHandler : HttpMessageHandler
-{
-    private readonly Func<HttpRequestMessage, HttpResponseMessage> _responder;
-    public List<(HttpRequestMessage Req, byte[] Body)> Captured { get; } = new();
-
-    public CapturingHttpMessageHandler(Func<HttpRequestMessage, HttpResponseMessage> responder) => _responder = responder;
-
-    protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
-    {
-        var body = request.Content != null ? await request.Content.ReadAsByteArrayAsync(ct) : Array.Empty<byte>();
-        Captured.Add((request, body));
-        return _responder(request);
-    }
-}
-
 public class PostgreSqlIntegrationTests : IAsyncLifetime
 {
     private readonly PostgreSqlContainer _dbContainer = new PostgreSqlBuilder("postgres:16-alpine")
@@ -69,12 +52,11 @@ public class PostgreSqlIntegrationTests : IAsyncLifetime
         var rawWebhookSecret = "whsec_test_secret_1234567890";
         var encryptedSecret = _secretProtector.Encrypt(rawWebhookSecret);
 
-        var handler = new CapturingHttpMessageHandler(_ => 
+        var handler = new CapturingHttpMessageHandler(_ =>
             new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("{\"status\":\"ok\"}") });
         using var httpClient = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(10) };
 
-        // Production requires HTTPS. The handler intercepts it before network I/O.
-        var destinationUrl = "https://webhook.example.com/webhook-test"; 
+        var destinationUrl = "https://webhook.example.com/webhook-test";
         var outbox = new OutboxEvent(Guid.NewGuid(), "invoice.paid", "{\"invoiceId\":\"123\",\"status\":\"Paid\"}", destinationUrl, encryptedSecret);
 
         _dbContext.OutboxEvents.Add(outbox);
@@ -90,10 +72,13 @@ public class PostgreSqlIntegrationTests : IAsyncLifetime
         refreshed.IsProcessed.Should().BeTrue();
 
         handler.Captured.Should().HaveCount(1);
-        var (req, body) = handler.Captured[0];
+        var captured = handler.Captured[0];
+        var req = captured.Req;
+        var body = captured.Body;
+
         var expectedBodyBytes = Encoding.UTF8.GetBytes(outbox.Payload);
         body.Should().Equal(expectedBodyBytes);
-        
+
         req.Headers.TryGetValues("X-CryptoGateway-Event-Id", out var _).Should().BeTrue();
         var timestamp = req.Headers.GetValues("X-CryptoGateway-Timestamp").First();
         var signature = req.Headers.GetValues("X-CryptoGateway-Signature").First();
@@ -107,9 +92,9 @@ public class PostgreSqlIntegrationTests : IAsyncLifetime
         var rawWebhookSecret = "whsec_test_secret_1234567890";
         var encryptedSecret = _secretProtector.Encrypt(rawWebhookSecret);
 
-        var handler = new CapturingHttpMessageHandler(_ => 
+        var handler = new CapturingHttpMessageHandler(_ =>
             new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("{\"status\":\"ok\"}") });
-        
+
         var destinationUrl = "https://webhook.example.com/webhook-concurrent";
         var outbox = new OutboxEvent(Guid.NewGuid(), "invoice.paid", "{\"invoiceId\":\"456\",\"status\":\"Paid\"}", destinationUrl, encryptedSecret);
 
@@ -119,7 +104,7 @@ public class PostgreSqlIntegrationTests : IAsyncLifetime
 
         using var client1 = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(10) };
         using var client2 = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(10) };
-        
+
         var options = new DbContextOptionsBuilder<GatewayDbContext>().UseNpgsql(_dbContainer.GetConnectionString()).Options;
         await using var db1 = new GatewayDbContext(options);
         await using var db2 = new GatewayDbContext(options);
@@ -136,18 +121,19 @@ public class PostgreSqlIntegrationTests : IAsyncLifetime
         var refreshed = await verifyDb.OutboxEvents.AsNoTracking().FirstOrDefaultAsync(o => o.Id == outbox.Id);
         refreshed.Should().NotBeNull();
         refreshed!.IsProcessed.Should().BeTrue();
-        refreshed.AttemptCount.Should().Be(1); // Exactly one worker claimed it via FOR UPDATE SKIP LOCKED
+        refreshed.AttemptCount.Should().Be(1);
 
-        handler.Captured.Should().HaveCount(1); // Exactly one HTTP request was made
-        var (req, body) = handler.Captured[0];
-        
+        handler.Captured.Should().HaveCount(1);
+        var captured = handler.Captured[0];
+        var req = captured.Req;
+        var body = captured.Body;
+
         var expectedBodyBytes = Encoding.UTF8.GetBytes(outbox.Payload);
         body.Should().Equal(expectedBodyBytes);
 
         var timestamp = req.Headers.GetValues("X-CryptoGateway-Timestamp").First();
         var signature = req.Headers.GetValues("X-CryptoGateway-Signature").First();
         var eventId = req.Headers.GetValues("X-CryptoGateway-Event-Id").First();
-
         var expectedSig = WebhookDispatcher.ComputeHmacSha256($"{timestamp}.{Encoding.UTF8.GetString(body)}", rawWebhookSecret);
         signature.Should().Be(expectedSig);
         eventId.Should().Be(outbox.Id.ToString());
@@ -196,8 +182,26 @@ public class PostgreSqlIntegrationTests : IAsyncLifetime
         refreshed!.IsProcessed.Should().BeFalse();
         refreshed.LastError.Should().Contain("Redirect");
 
-        // Only one request made (to the original destination), redirect was NOT followed
         handler.Captured.Should().HaveCount(1);
         handler.Captured[0].Req.RequestUri!.AbsolutePath.Should().Be("/webhook-redirect");
+    }
+}
+
+/// <summary>
+/// Isolated test transport that intercepts HTTPS requests without needing real TLS certificates.
+/// This satisfies "isolated test transport" and "preserve production HTTPS-only policy".
+/// </summary>
+public sealed class CapturingHttpMessageHandler : HttpMessageHandler
+{
+    private readonly Func<HttpRequestMessage, HttpResponseMessage> _responder;
+    public List<(HttpRequestMessage Req, byte[] Body)> Captured { get; } = new();
+
+    public CapturingHttpMessageHandler(Func<HttpRequestMessage, HttpResponseMessage> responder) => _responder = responder;
+
+    protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+    {
+        var body = request.Content != null ? await request.Content.ReadAsByteArrayAsync(cancellationToken) : Array.Empty<byte>();
+        Captured.Add((request, body));
+        return _responder(request);
     }
 }
