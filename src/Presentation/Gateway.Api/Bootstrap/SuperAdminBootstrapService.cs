@@ -1,14 +1,14 @@
-﻿using Gateway.Domain.Entities;
+﻿using System;
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
+using Gateway.Domain.Entities;
 using Microsoft.AspNetCore.Identity;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
-using System;
-using System.Linq;
-using System.Threading;
-using System.Threading.Tasks;
-using Microsoft.EntityFrameworkCore;
 
 namespace Gateway.Api.Bootstrap;
 
@@ -18,10 +18,7 @@ public class SuperAdminBootstrapService : IHostedService
     private readonly IConfiguration _configuration;
     private readonly ILogger<SuperAdminBootstrapService> _logger;
 
-    public SuperAdminBootstrapService(
-        IServiceProvider serviceProvider,
-        IConfiguration configuration,
-        ILogger<SuperAdminBootstrapService> logger)
+    public SuperAdminBootstrapService(IServiceProvider serviceProvider, IConfiguration configuration, ILogger<SuperAdminBootstrapService> logger)
     {
         _serviceProvider = serviceProvider;
         _configuration = configuration;
@@ -108,11 +105,26 @@ public class SuperAdminBootstrapService : IHostedService
         {
             _logger.LogError(
                 "Bootstrap FAILED: User created but role assignment failed. " +
-                "Cleaning up partially created user to allow safe retry. Errors: {Errors}",
+                "Attempting to clean up partially created user. Errors: {Errors}",
                 string.Join(", ", roleResult.Errors.Select(e => e.Description)));
             
             // CRITICAL FIX: Delete the orphaned user so the next startup can retry cleanly
-            await userManager.DeleteAsync(user);
+            var deleteResult = await userManager.DeleteAsync(user);
+            if (!deleteResult.Succeeded)
+            {
+                _logger.LogCritical(
+                    "Bootstrap CRITICAL FAILURE: Could not delete partially created user. " +
+                    "Manual intervention required. User '{Email}' exists without SuperAdmin role. " +
+                    "Delete errors: {Errors}",
+                    email,
+                    string.Join(", ", deleteResult.Errors.Select(e => e.Description)));
+            }
+            else
+            {
+                _logger.LogWarning(
+                    "Bootstrap cleanup successful: Partially created user '{Email}' deleted. " +
+                    "Next startup will retry bootstrap.", email);
+            }
             return;
         }
 

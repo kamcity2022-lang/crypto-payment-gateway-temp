@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Data;
+using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
@@ -13,7 +14,6 @@ using Gateway.Domain.Entities;
 using Gateway.Domain.Enums;
 using Gateway.Infrastructure.Security;
 using Gateway.Persistence;
-using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
@@ -30,31 +30,6 @@ public class InvoicesController : ControllerBase
         _dbContext = dbContext;
     }
 
-    /// <summary>
-    /// Helper method to resolve MerchantId from either HMAC authentication path or Human-User Identity path.
-    /// Never trusts client-supplied IDs.
-    /// </summary>
-    private bool TryResolveMerchantId(out Guid merchantId)
-    {
-        merchantId = Guid.Empty;
-
-        // Path 1: Human-User Authorization (Resolved by MerchantIdHandler via Policy)
-        if (HttpContext.Items.TryGetValue("ResolvedMerchantId", out var resolved) && resolved is Guid rGuid)
-        {
-            merchantId = rGuid;
-            return true;
-        }
-
-        // Path 2: HMAC Authentication (Set by MerchantSignatureFilter for API calls)
-        if (HttpContext.Items.TryGetValue("MerchantId", out var hmac) && hmac is Guid hGuid)
-        {
-            merchantId = hGuid;
-            return true;
-        }
-
-        return false;
-    }
-
     [HttpPost]
     [RequireMerchantSignature]
     public async Task<IActionResult> CreateInvoice([FromBody] CreateInvoiceRequest request, CancellationToken ct)
@@ -64,7 +39,8 @@ public class InvoicesController : ControllerBase
             return BadRequest(new { error = "Invalid or prohibited callback URL destination." });
         }
 
-        if (!TryResolveMerchantId(out var merchantId))
+        // ✅ FIX: HMAC path uses MerchantId (set by MerchantSignatureFilter)
+        if (!HttpContext.Items.TryGetValue("MerchantId", out var merchantIdObj) || merchantIdObj is not Guid merchantId)
         {
             return Forbid();
         }
@@ -84,7 +60,7 @@ public class InvoicesController : ControllerBase
             using var sha = SHA256.Create();
             var rawReq = JsonSerializer.Serialize(request);
             requestPayloadHash = Convert.ToHexString(sha.ComputeHash(Encoding.UTF8.GetBytes(rawReq))).ToLowerInvariant();
-            
+
             var existingIdempotency = await _dbContext.MerchantIdempotencyKeys
                 .AsNoTracking()
                 .FirstOrDefaultAsync(k => k.MerchantId == merchantId && k.Key == idempotencyKey && k.ExpiresAtUtc > DateTime.UtcNow, ct);
@@ -181,7 +157,8 @@ public class InvoicesController : ControllerBase
     [RequireMerchantSignature]
     public async Task<IActionResult> GetInvoiceById(Guid invoiceId, CancellationToken ct)
     {
-        if (!TryResolveMerchantId(out var merchantId))
+        // ✅ FIX: HMAC path uses MerchantId (set by MerchantSignatureFilter)
+        if (!HttpContext.Items.TryGetValue("MerchantId", out var merchantIdObj) || merchantIdObj is not Guid merchantId)
         {
             return Forbid();
         }
@@ -217,7 +194,8 @@ public class InvoicesController : ControllerBase
     [RequireMerchantSignature]
     public async Task<IActionResult> GetInvoices([FromQuery] InvoiceFilterRequest filter, CancellationToken ct)
     {
-        if (!TryResolveMerchantId(out var merchantId))
+        // ✅ FIX: HMAC path uses MerchantId (set by MerchantSignatureFilter)
+        if (!HttpContext.Items.TryGetValue("MerchantId", out var merchantIdObj) || merchantIdObj is not Guid merchantId)
         {
             return Forbid();
         }

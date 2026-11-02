@@ -19,7 +19,7 @@ public class MerchantIdHandler : AuthorizationHandler<MerchantIdRequirement>
         // ✅ FIX: Reliable server-issued role check for SuperAdmin
         var isSuperAdmin = user.IsInRole("SuperAdmin");
 
-        // 1. Try to get MerchantId from human-user claims
+        // 1. Get MerchantId from human-user claims ONLY (no HMAC fallback)
         var userMerchantIdClaim = user.FindFirstValue("MerchantId");
         Guid? userMerchantId = null;
         if (!string.IsNullOrEmpty(userMerchantIdClaim) && Guid.TryParse(userMerchantIdClaim, out var parsedGuid))
@@ -27,20 +27,14 @@ public class MerchantIdHandler : AuthorizationHandler<MerchantIdRequirement>
             userMerchantId = parsedGuid;
         }
 
-        // 2. Fallback to HMAC-authenticated trusted path
-        if (userMerchantId == null && httpContext.Items.TryGetValue("MerchantId", out var itemMerchantId) && itemMerchantId is Guid hmacMerchantId)
-        {
-            userMerchantId = hmacMerchantId;
-        }
-
         // ✅ FIX: Missing tenant context denies access (unless SuperAdmin)
         if (userMerchantId == null && !isSuperAdmin)
         {
-            return Task.CompletedTask; 
+            return Task.CompletedTask;
         }
 
-        var targetMerchantIdStr = httpContext.Request.RouteValues[requirement.RouteKey]?.ToString() 
-                            ?? httpContext.Request.Query[requirement.RouteKey].FirstOrDefault();
+        var targetMerchantIdStr = httpContext.Request.RouteValues[requirement.RouteKey]?.ToString()
+            ?? httpContext.Request.Query[requirement.RouteKey].FirstOrDefault();
 
         if (isSuperAdmin)
         {
