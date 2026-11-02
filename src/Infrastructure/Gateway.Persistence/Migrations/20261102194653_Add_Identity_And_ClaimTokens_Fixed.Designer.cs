@@ -12,8 +12,8 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace Gateway.Persistence.Migrations
 {
     [DbContext(typeof(GatewayDbContext))]
-    [Migration("20261102193441_Add_Identity_And_ClaimTokens")]
-    partial class Add_Identity_And_ClaimTokens
+    [Migration("20261102194653_Add_Identity_And_ClaimTokens_Fixed")]
+    partial class Add_Identity_And_ClaimTokens_Fixed
     {
         /// <inheritdoc />
         protected override void BuildTargetModel(ModelBuilder modelBuilder)

@@ -1,6 +1,8 @@
 ﻿using Gateway.Domain.Entities;
 using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.AspNetCore.Identity;
+using Microsoft.EntityFrameworkCore;
 
 namespace Gateway.Persistence;
 
@@ -26,7 +28,11 @@ public class GatewayDbContext : IdentityDbContext<ApplicationUser>
 
         modelBuilder.Entity<ApplicationUser>(b =>
         {
-            b.HasOne<Merchant>().WithMany().HasForeignKey(u => u.MerchantId).OnDelete(DeleteBehavior.SetNull);
+            b.HasOne<Merchant>()
+                .WithMany() // Merchant does not have a navigation collection of Users
+                .HasForeignKey(u => u.MerchantId)
+                .HasPrincipalKey(m => m.Id)
+                .OnDelete(DeleteBehavior.SetNull);
         });
 
         modelBuilder.Entity<MerchantClaimToken>(b =>

@@ -33,12 +33,24 @@ public class AuthController : ControllerBase
         }
 
         var hashedToken = HashToken(request.Token);
+        var now = DateTime.UtcNow;
+
+        // ATOMIC single-use enforcement: Only one concurrent request can succeed in marking the token as used.
+        var rowsAffected = await _dbContext.Database.ExecuteSqlInterpolatedAsync(
+            $"UPDATE \"MerchantClaimTokens\" SET \"IsUsed\" = true WHERE \"HashedToken\" = {hashedToken} AND \"IsUsed\" = false AND \"ExpiresAtUtc\" > {now}", ct);
+
+        if (rowsAffected == 0)
+        {
+            return BadRequest(new { error = "Invalid, expired, or already used activation token." });
+        }
+
+        // Fetch the record to get the MerchantId now that we own the token
         var tokenRecord = await _dbContext.MerchantClaimTokens
             .FirstOrDefaultAsync(t => t.HashedToken == hashedToken, ct);
 
-        if (tokenRecord == null || tokenRecord.IsUsed || tokenRecord.ExpiresAtUtc < DateTime.UtcNow)
+        if (tokenRecord == null)
         {
-            return BadRequest(new { error = "Invalid, expired, or already used activation token." });
+            return BadRequest(new { error = "Token record not found." });
         }
 
         var user = new ApplicationUser
@@ -46,42 +58,27 @@ public class AuthController : ControllerBase
             UserName = request.Email,
             Email = request.Email,
             MerchantId = tokenRecord.MerchantId,
-            EmailConfirmed = true
+            EmailConfirmed = false // Do NOT auto-confirm; requires actual email verification flow
         };
 
         var result = await _userManager.CreateAsync(user, request.Password);
         if (!result.Succeeded)
         {
+            // Rollback the token usage if user creation fails, allowing retry
+            await _dbContext.Database.ExecuteSqlInterpolatedAsync(
+                $"UPDATE \"MerchantClaimTokens\" SET \"IsUsed\" = false WHERE \"Id\" = {tokenRecord.Id}", ct);
+            
             return BadRequest(new { error = "User creation failed.", details = result.Errors });
         }
 
-        tokenRecord.MarkAsUsed();
-        await _dbContext.SaveChangesAsync(ct);
+        // Assign the standard Owner role
+        await _userManager.AddToRoleAsync(user, "Owner");
 
-        return Ok(new { message = "Account activated successfully. You can now log in." });
+        return Ok(new { message = "Account activated successfully. Please verify your email to unlock full access." });
     }
 
-    [HttpPost("admin/merchants/{merchantId:guid}/invite")]
-    public async Task<IActionResult> GenerateInvite(Guid merchantId, CancellationToken ct)
-    {
-        // Note: Full RBAC/Authorization for this endpoint will be enforced in Task 2.
-        var merchant = await _dbContext.Merchants.FindAsync(new object[] { merchantId }, ct);
-        if (merchant == null)
-        {
-            return NotFound(new { error = "Merchant not found." });
-        }
-
-        var plainToken = Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
-        var tokenRecord = new MerchantClaimToken(merchantId, plainToken, TimeSpan.FromDays(7));
-        
-        _dbContext.MerchantClaimTokens.Add(tokenRecord);
-        await _dbContext.SaveChangesAsync(ct);
-
-        return Ok(new { 
-            message = "Invite token generated securely. Provide this to the user out-of-band (e.g., verified email).",
-            inviteToken = plainToken 
-        });
-    }
+    // TODO: Re-implement in Task 2 with secure [Authorize(Roles = "SuperAdmin")] policy 
+    // and proper SuperAdmin bootstrap mechanism. Disabled for now to prevent public exposure.
 
     private static string HashToken(string token)
     {
