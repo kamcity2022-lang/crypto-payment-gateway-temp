@@ -1,6 +1,5 @@
 ﻿using System;
 using System.Data;
-using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
@@ -14,6 +13,7 @@ using Gateway.Domain.Entities;
 using Gateway.Domain.Enums;
 using Gateway.Infrastructure.Security;
 using Gateway.Persistence;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
@@ -30,6 +30,31 @@ public class InvoicesController : ControllerBase
         _dbContext = dbContext;
     }
 
+    /// <summary>
+    /// Helper method to resolve MerchantId from either HMAC authentication path or Human-User Identity path.
+    /// Never trusts client-supplied IDs.
+    /// </summary>
+    private bool TryResolveMerchantId(out Guid merchantId)
+    {
+        merchantId = Guid.Empty;
+
+        // Path 1: Human-User Authorization (Resolved by MerchantIdHandler via Policy)
+        if (HttpContext.Items.TryGetValue("ResolvedMerchantId", out var resolved) && resolved is Guid rGuid)
+        {
+            merchantId = rGuid;
+            return true;
+        }
+
+        // Path 2: HMAC Authentication (Set by MerchantSignatureFilter for API calls)
+        if (HttpContext.Items.TryGetValue("MerchantId", out var hmac) && hmac is Guid hGuid)
+        {
+            merchantId = hGuid;
+            return true;
+        }
+
+        return false;
+    }
+
     [HttpPost]
     [RequireMerchantSignature]
     public async Task<IActionResult> CreateInvoice([FromBody] CreateInvoiceRequest request, CancellationToken ct)
@@ -38,8 +63,11 @@ public class InvoicesController : ControllerBase
         {
             return BadRequest(new { error = "Invalid or prohibited callback URL destination." });
         }
-        
-        var merchantId = (Guid)HttpContext.Items["MerchantId"]!;
+
+        if (!TryResolveMerchantId(out var merchantId))
+        {
+            return Forbid();
+        }
 
         var fiatCurrency = request.FiatCurrency.Trim().ToUpperInvariant();
         if (fiatCurrency != "USD")
@@ -56,7 +84,7 @@ public class InvoicesController : ControllerBase
             using var sha = SHA256.Create();
             var rawReq = JsonSerializer.Serialize(request);
             requestPayloadHash = Convert.ToHexString(sha.ComputeHash(Encoding.UTF8.GetBytes(rawReq))).ToLowerInvariant();
-
+            
             var existingIdempotency = await _dbContext.MerchantIdempotencyKeys
                 .AsNoTracking()
                 .FirstOrDefaultAsync(k => k.MerchantId == merchantId && k.Key == idempotencyKey && k.ExpiresAtUtc > DateTime.UtcNow, ct);
@@ -67,7 +95,6 @@ public class InvoicesController : ControllerBase
                 {
                     return Conflict(new { error = "Idempotency conflict: A request with the same Idempotency-Key but different payload already exists." });
                 }
-
                 return Content(existingIdempotency.ResponsePayload, "application/json");
             }
         }
@@ -92,7 +119,6 @@ public class InvoicesController : ControllerBase
         var cryptoAmount = request.FiatAmount / exchangeRate;
         var expectedUnits = (long)Math.Round(cryptoAmount * 1_000_000m, MidpointRounding.AwayFromZero);
         var underpaymentThreshold = 50_000L;
-
         var checkoutToken = Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
 
         var invoice = new Invoice(
@@ -155,16 +181,19 @@ public class InvoicesController : ControllerBase
     [RequireMerchantSignature]
     public async Task<IActionResult> GetInvoiceById(Guid invoiceId, CancellationToken ct)
     {
-        if (!HttpContext.Items.TryGetValue("ResolvedMerchantId", out var resolvedMerchantIdObj) || resolvedMerchantIdObj is not Guid merchantId)
+        if (!TryResolveMerchantId(out var merchantId))
         {
             return Forbid();
         }
-    
-        var invoice = await _dbContext.Invoices
-            .FirstOrDefaultAsync(i => i.Id == invoiceId && i.MerchantId == merchantId, ct);
-        if (invoice == null)
-            return NotFound(new { error = "Invoice not found." });
 
+        var invoice = await _dbContext.Invoices
+            .AsNoTracking()
+            .FirstOrDefaultAsync(i => i.Id == invoiceId && i.MerchantId == merchantId, ct);
+
+        if (invoice is null)
+        {
+            return NotFound(new { error = "Invoice not found." });
+        }
 
         return Ok(new InvoiceResponseDto
         {
@@ -188,11 +217,10 @@ public class InvoicesController : ControllerBase
     [RequireMerchantSignature]
     public async Task<IActionResult> GetInvoices([FromQuery] InvoiceFilterRequest filter, CancellationToken ct)
     {
-        if (!HttpContext.Items.TryGetValue("ResolvedMerchantId", out var resolvedMerchantIdObj) || resolvedMerchantIdObj is not Guid merchantId)
+        if (!TryResolveMerchantId(out var merchantId))
         {
             return Forbid();
         }
-        merchantId = (Guid)resolvedMerchantIdObj;
 
         var page = Math.Max(1, filter.Page);
         var pageSize = Math.Clamp(filter.PageSize, 1, 100);
@@ -205,7 +233,6 @@ public class InvoicesController : ControllerBase
         }
 
         var totalCount = await query.CountAsync(ct);
-
         var items = await query
             .OrderByDescending(i => i.CreatedAtUtc)
             .Skip((page - 1) * pageSize)

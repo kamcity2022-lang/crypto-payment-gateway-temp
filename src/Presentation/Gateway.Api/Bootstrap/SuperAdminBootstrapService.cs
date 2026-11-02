@@ -1,14 +1,14 @@
-﻿using System;
-using System.Linq;
-using System.Threading;
-using System.Threading.Tasks;
-using Gateway.Domain.Entities;
+﻿using Gateway.Domain.Entities;
 using Microsoft.AspNetCore.Identity;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using System;
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
+using Microsoft.EntityFrameworkCore;
 
 namespace Gateway.Api.Bootstrap;
 
@@ -18,7 +18,10 @@ public class SuperAdminBootstrapService : IHostedService
     private readonly IConfiguration _configuration;
     private readonly ILogger<SuperAdminBootstrapService> _logger;
 
-    public SuperAdminBootstrapService(IServiceProvider serviceProvider, IConfiguration configuration, ILogger<SuperAdminBootstrapService> logger)
+    public SuperAdminBootstrapService(
+        IServiceProvider serviceProvider,
+        IConfiguration configuration,
+        ILogger<SuperAdminBootstrapService> logger)
     {
         _serviceProvider = serviceProvider;
         _configuration = configuration;
@@ -31,70 +34,92 @@ public class SuperAdminBootstrapService : IHostedService
         var roleManager = scope.ServiceProvider.GetRequiredService<RoleManager<IdentityRole>>();
         var userManager = scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
 
-        // ✅ FIX: Seed all five roles idempotently, independently of SuperAdmin config
-        var roles = new[] { "SuperAdmin", "Owner", "Admin", "Developer", "Viewer" };
-        foreach (var role in roles)
+        var requiredRoles = new[] { "SuperAdmin", "Owner", "Admin", "Developer", "Viewer" };
+
+        // STEP 1: Create required roles. Abort immediately if any fail.
+        foreach (var role in requiredRoles)
         {
             if (!await roleManager.RoleExistsAsync(role))
             {
                 var result = await roleManager.CreateAsync(new IdentityRole(role));
                 if (!result.Succeeded)
                 {
-                    _logger.LogError("Failed to create role {Role}: {Errors}", role, string.Join(", ", result.Errors.Select(e => e.Description)));
+                    _logger.LogError(
+                        "Bootstrap ABORTED: Failed to create role '{Role}'. Errors: {Errors}",
+                        role,
+                        string.Join(", ", result.Errors.Select(e => e.Description)));
+                    return; // Stop execution to prevent partial state
                 }
             }
         }
 
-        // ✅ FIX: Never overwrite or modify an existing SuperAdmin
-        var existingSuperAdmin = await userManager.Users.FirstOrDefaultAsync(u => u.IsSuperAdmin, cancellationToken);
-        if (existingSuperAdmin != null)
+        // STEP 2: Check if a SuperAdmin already exists.
+        var existingSuperAdmin = await userManager.Users
+            .FirstOrDefaultAsync(u => u.IsSuperAdmin, cancellationToken);
+
+        if (existingSuperAdmin is not null)
         {
-            _logger.LogInformation("SuperAdmin bootstrap skipped: SuperAdmin already exists.");
+            _logger.LogInformation("Bootstrap skipped: SuperAdmin account already exists.");
             return;
         }
 
+        // STEP 3: Read credentials from configuration.
         var email = _configuration["Bootstrap:SuperAdminEmail"];
         var password = _configuration["Bootstrap:SuperAdminPassword"];
 
         if (string.IsNullOrWhiteSpace(email) || string.IsNullOrWhiteSpace(password))
         {
-            _logger.LogInformation("SuperAdmin bootstrap skipped: Bootstrap credentials not configured.");
+            _logger.LogInformation("Bootstrap skipped: SuperAdmin credentials not configured in appsettings.");
             return;
         }
 
-        // ✅ FIX: Fail safely if email belongs to a non-SuperAdmin account
+        // STEP 4: Check if the email is already used by a non-SuperAdmin user.
         var existingUser = await userManager.FindByEmailAsync(email);
-        if (existingUser != null)
+        if (existingUser is not null)
         {
-            _logger.LogError("SuperAdmin bootstrap failed: Email {Email} already belongs to a non-SuperAdmin account. Failing safely to prevent privilege escalation.", email);
+            _logger.LogError(
+                "Bootstrap FAILED: Email '{Email}' already belongs to a non-SuperAdmin account. " +
+                "Refusing to promote existing user for security reasons.", email);
             return;
         }
 
-        // ✅ FIX: Ensure MerchantId = null and IsSuperAdmin = true
-        var user = new ApplicationUser 
-        { 
-            UserName = email, 
-            Email = email, 
-            EmailConfirmed = true, 
-            IsSuperAdmin = true, 
-            MerchantId = null 
+        // STEP 5: Create the SuperAdmin user.
+        var user = new ApplicationUser
+        {
+            UserName = email,
+            Email = email,
+            EmailConfirmed = true,
+            IsSuperAdmin = true,
+            MerchantId = null // SuperAdmin is cross-tenant
         };
-        
+
         var createResult = await userManager.CreateAsync(user, password);
         if (!createResult.Succeeded)
         {
-            _logger.LogError("Failed to create SuperAdmin: {Errors}", string.Join(", ", createResult.Errors.Select(e => e.Description)));
+            _logger.LogError(
+                "Bootstrap FAILED: Could not create SuperAdmin user. Errors: {Errors}",
+                string.Join(", ", createResult.Errors.Select(e => e.Description)));
             return;
         }
 
+        // STEP 6: Assign the SuperAdmin role.
         var roleResult = await userManager.AddToRoleAsync(user, "SuperAdmin");
         if (!roleResult.Succeeded)
         {
-            _logger.LogError("Failed to assign SuperAdmin role: {Errors}", string.Join(", ", roleResult.Errors.Select(e => e.Description)));
+            _logger.LogError(
+                "Bootstrap FAILED: User created but role assignment failed. " +
+                "Cleaning up partially created user to allow safe retry. Errors: {Errors}",
+                string.Join(", ", roleResult.Errors.Select(e => e.Description)));
+            
+            // CRITICAL FIX: Delete the orphaned user so the next startup can retry cleanly
+            await userManager.DeleteAsync(user);
             return;
         }
 
-        _logger.LogWarning("SuperAdmin bootstrap completed for {Email}. REMOVE BOOTSTRAP CREDENTIALS FROM CONFIGURATION IN PRODUCTION.", email);
+        _logger.LogWarning(
+            "Bootstrap SUCCESS: SuperAdmin account created for '{Email}'. " +
+            "SECURITY WARNING: Remove Bootstrap credentials from configuration in production!",
+            email);
     }
 
     public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
