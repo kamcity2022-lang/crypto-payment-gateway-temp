@@ -92,13 +92,11 @@ public class RequireMerchantSignatureAttribute : Attribute, IAsyncActionFilter
         // 5. Only AFTER successful signature verification, atomically persist the nonce
         var existingNonce = await db.MerchantNonces
             .AnyAsync(n => n.MerchantId == merchant.Id && n.Nonce == nonce);
-
         if (existingNonce)
         {
             context.Result = new ConflictObjectResult(new { error = "Replay detected: Nonce has already been used." });
             return;
         }
-
         db.MerchantNonces.Add(new MerchantNonce(merchant.Id, nonce, TimeSpan.FromMinutes(10)));
         try
         {
@@ -110,15 +108,8 @@ public class RequireMerchantSignatureAttribute : Attribute, IAsyncActionFilter
             return;
         }
 
+        // ✅ FIX: Only set the trusted MerchantId. Do NOT inject human-user claims or roles.
         context.HttpContext.Items["MerchantId"] = merchant.Id;
-        
-        var claims = new System.Collections.Generic.List<System.Security.Claims.Claim>
-        {
-            new System.Security.Claims.Claim("MerchantId", merchant.Id.ToString()),
-            new System.Security.Claims.Claim(System.Security.Claims.ClaimTypes.Role, "Owner")
-        };
-        var identity = new System.Security.Claims.ClaimsIdentity(claims, "HmacAuthentication");
-        context.HttpContext.User.AddIdentity(identity);
         
         await next();
     }

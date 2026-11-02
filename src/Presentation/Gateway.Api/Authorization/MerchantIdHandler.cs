@@ -16,31 +16,48 @@ public class MerchantIdHandler : AuthorizationHandler<MerchantIdRequirement>
         var user = context.User;
         if (!user.Identity?.IsAuthenticated ?? true) return Task.CompletedTask;
 
-        var isSuperAdmin = user.HasClaim(c => c.Type == "IsSuperAdmin" && c.Value == "True");
-        
-        var userMerchantId = user.FindFirstValue("MerchantId");
-        // Fallback to HMAC context if Identity claim is missing
-        if (string.IsNullOrEmpty(userMerchantId) && httpContext.Items.TryGetValue("MerchantId", out var itemMerchantId))
+        // ✅ FIX: Reliable server-issued role check for SuperAdmin
+        var isSuperAdmin = user.IsInRole("SuperAdmin");
+
+        // 1. Try to get MerchantId from human-user claims
+        var userMerchantIdClaim = user.FindFirstValue("MerchantId");
+        Guid? userMerchantId = null;
+        if (!string.IsNullOrEmpty(userMerchantIdClaim) && Guid.TryParse(userMerchantIdClaim, out var parsedGuid))
         {
-            userMerchantId = itemMerchantId.ToString();
+            userMerchantId = parsedGuid;
         }
 
-        if (string.IsNullOrEmpty(userMerchantId) && !isSuperAdmin)
+        // 2. Fallback to HMAC-authenticated trusted path
+        if (userMerchantId == null && httpContext.Items.TryGetValue("MerchantId", out var itemMerchantId) && itemMerchantId is Guid hmacMerchantId)
         {
-            return Task.CompletedTask; // Deny by default
+            userMerchantId = hmacMerchantId;
         }
 
-        var targetMerchantId = httpContext.Request.RouteValues[requirement.RouteKey]?.ToString() 
+        // ✅ FIX: Missing tenant context denies access (unless SuperAdmin)
+        if (userMerchantId == null && !isSuperAdmin)
+        {
+            return Task.CompletedTask; 
+        }
+
+        var targetMerchantIdStr = httpContext.Request.RouteValues[requirement.RouteKey]?.ToString() 
                             ?? httpContext.Request.Query[requirement.RouteKey].FirstOrDefault();
 
         if (isSuperAdmin)
         {
-            httpContext.Items["ResolvedMerchantId"] = string.IsNullOrEmpty(targetMerchantId) ? null : targetMerchantId;
+            // ✅ FIX: Explicit cross-tenant access resolution
+            if (!string.IsNullOrEmpty(targetMerchantIdStr) && Guid.TryParse(targetMerchantIdStr, out var targetGuid))
+            {
+                httpContext.Items["ResolvedMerchantId"] = targetGuid;
+            }
+            else
+            {
+                httpContext.Items["ResolvedMerchantId"] = null;
+            }
             context.Succeed(requirement);
             return Task.CompletedTask;
         }
 
-        if (string.IsNullOrEmpty(targetMerchantId))
+        if (string.IsNullOrEmpty(targetMerchantIdStr))
         {
             // Implicitly accessing own resources
             httpContext.Items["ResolvedMerchantId"] = userMerchantId;
@@ -48,7 +65,8 @@ public class MerchantIdHandler : AuthorizationHandler<MerchantIdRequirement>
             return Task.CompletedTask;
         }
 
-        if (userMerchantId == targetMerchantId)
+        // ✅ FIX: Do not trust client-supplied MerchantId. Must match authenticated user's MerchantId.
+        if (Guid.TryParse(targetMerchantIdStr, out var targetMerchantId) && userMerchantId == targetMerchantId)
         {
             httpContext.Items["ResolvedMerchantId"] = userMerchantId;
             context.Succeed(requirement);

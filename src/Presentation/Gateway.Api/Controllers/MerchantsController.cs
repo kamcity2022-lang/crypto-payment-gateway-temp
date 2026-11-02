@@ -11,6 +11,7 @@ using Gateway.Blockchain.Tron;
 using Gateway.Domain.Entities;
 using Gateway.Infrastructure.Security;
 using Gateway.Persistence;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
@@ -30,6 +31,7 @@ public class MerchantsController : ControllerBase
     }
 
     [HttpPost("register")]
+    [Authorize(Policy = "SuperAdminOnly")]
     public async Task<IActionResult> RegisterMerchant([FromBody] RegisterMerchantRequest request, CancellationToken ct)
     {
         if (!SsrfValidator.IsDestinationSafe(request.WebhookUrl))
@@ -99,12 +101,12 @@ public class MerchantsController : ControllerBase
     }
 
     [HttpGet("me")]
-    [RequireMerchantSignature]
+    [Microsoft.AspNetCore.Authorization.Authorize(Policy = "MerchantViewer")]
     public async Task<IActionResult> GetProfile(CancellationToken ct)
     {
-        if (!HttpContext.Items.TryGetValue("ResolvedMerchantId", out var resolvedMerchantIdObj) || resolvedMerchantIdObj == null)
+        if (!HttpContext.Items.TryGetValue("ResolvedMerchantId", out var resolvedMerchantIdObj) || resolvedMerchantIdObj is not Guid merchantId)
             return Forbid();
-        var merchantId = (Guid)resolvedMerchantIdObj;
+        merchantId = (Guid)resolvedMerchantIdObj;
 
         var merchant = await _dbContext.Merchants
             .AsNoTracking()

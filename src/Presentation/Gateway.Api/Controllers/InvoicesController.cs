@@ -155,12 +155,11 @@ public class InvoicesController : ControllerBase
     [RequireMerchantSignature]
     public async Task<IActionResult> GetInvoiceById(Guid invoiceId, CancellationToken ct)
     {
-        if (!HttpContext.Items.TryGetValue("ResolvedMerchantId", out var resolvedMerchantIdObj) || resolvedMerchantIdObj == null)
+        if (!HttpContext.Items.TryGetValue("ResolvedMerchantId", out var resolvedMerchantIdObj) || resolvedMerchantIdObj is not Guid merchantId)
         {
-            return Forbid(); // Missing or invalid tenant context
+            return Forbid();
         }
-        var merchantId = (Guid)resolvedMerchantIdObj;
-
+    
         var invoice = await _dbContext.Invoices
             .FirstOrDefaultAsync(i => i.Id == invoiceId && i.MerchantId == merchantId, ct);
         if (invoice == null)
@@ -189,16 +188,16 @@ public class InvoicesController : ControllerBase
     [RequireMerchantSignature]
     public async Task<IActionResult> GetInvoices([FromQuery] InvoiceFilterRequest filter, CancellationToken ct)
     {
-        if (!HttpContext.Items.TryGetValue("ResolvedMerchantId", out var resolvedMerchantIdObj) || resolvedMerchantIdObj == null)
+        if (!HttpContext.Items.TryGetValue("ResolvedMerchantId", out var resolvedMerchantIdObj) || resolvedMerchantIdObj is not Guid merchantId)
+        {
             return Forbid();
-        var merchantId = (Guid)resolvedMerchantIdObj;
+        }
+        merchantId = (Guid)resolvedMerchantIdObj;
 
         var page = Math.Max(1, filter.Page);
         var pageSize = Math.Clamp(filter.PageSize, 1, 100);
 
-        var query = _dbContext.Invoices
-            .AsNoTracking()
-            .Where(i => i.MerchantId == merchantId);
+        var query = _dbContext.Invoices.AsNoTracking().Where(i => i.MerchantId == merchantId);
 
         if (!string.IsNullOrWhiteSpace(filter.Status) && Enum.TryParse<InvoiceStatus>(filter.Status, true, out var parsedStatus))
         {
