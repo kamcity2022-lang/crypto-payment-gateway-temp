@@ -12,7 +12,7 @@ var builder = WebApplication.CreateBuilder(args);
 
 // 1. Database Connection
 var connectionString = builder.Configuration.GetConnectionString("DefaultConnection")
-?? throw new InvalidOperationException("Connection string 'DefaultConnection' is required.");
+    ?? throw new InvalidOperationException("Connection string 'DefaultConnection' is required.");
 
 builder.Services.AddDbContext<GatewayDbContext>(options =>
     options.UseNpgsql(connectionString));
@@ -27,6 +27,8 @@ builder.Services.AddIdentity<ApplicationUser, IdentityRole>(options =>
     options.Password.RequiredLength = 8;
     options.Lockout.DefaultLockoutTimeSpan = TimeSpan.FromMinutes(15);
     options.Lockout.MaxFailedAccessAttempts = 5;
+    // ✅ Require email confirmation for login (email verification flow to be implemented in Task 2)
+    options.SignIn.RequireConfirmedEmail = true;
 })
 .AddEntityFrameworkStores<GatewayDbContext>()
 .AddDefaultTokenProviders();
@@ -86,7 +88,7 @@ if (app.Environment.IsDevelopment())
 app.UseHttpsRedirection();
 app.UseDefaultFiles();
 app.UseStaticFiles();
-app.UseAuthentication(); // Required for Identity Cookie Auth
+app.UseAuthentication();
 app.UseAuthorization();
 app.MapControllers();
 app.MapHealthChecks("/healthz");

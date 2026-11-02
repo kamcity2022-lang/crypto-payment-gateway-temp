@@ -1,7 +1,6 @@
 ﻿using Gateway.Domain.Entities;
-using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.Identity;
+using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
 
 namespace Gateway.Persistence;
@@ -26,13 +25,15 @@ public class GatewayDbContext : IdentityDbContext<ApplicationUser>
     {
         base.OnModelCreating(modelBuilder);
 
+        // ✅ FIX: Explicitly bind navigation property to the existing MerchantId FK.
+        // This prevents EF Core from generating a shadow "MerchantId1" column.
         modelBuilder.Entity<ApplicationUser>(b =>
         {
-            b.HasOne<Merchant>()
-                .WithMany() // Merchant does not have a navigation collection of Users
-                .HasForeignKey(u => u.MerchantId)
-                .HasPrincipalKey(m => m.Id)
-                .OnDelete(DeleteBehavior.SetNull);
+            b.HasOne(u => u.Merchant)
+             .WithMany()
+             .HasForeignKey(u => u.MerchantId)
+             .HasPrincipalKey(m => m.Id)
+             .OnDelete(DeleteBehavior.SetNull);
         });
 
         modelBuilder.Entity<MerchantClaimToken>(b =>

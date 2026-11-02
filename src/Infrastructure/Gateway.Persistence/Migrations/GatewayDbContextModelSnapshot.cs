@@ -53,9 +53,6 @@ namespace Gateway.Persistence.Migrations
                     b.Property<Guid?>("MerchantId")
                         .HasColumnType("uuid");
 
-                    b.Property<Guid?>("MerchantId1")
-                        .HasColumnType("uuid");
-
                     b.Property<string>("NormalizedEmail")
                         .HasMaxLength(256)
                         .HasColumnType("character varying(256)");
@@ -86,8 +83,6 @@ namespace Gateway.Persistence.Migrations
                     b.HasKey("Id");
 
                     b.HasIndex("MerchantId");
-
-                    b.HasIndex("MerchantId1");
 
                     b.HasIndex("NormalizedEmail")
                         .HasDatabaseName("EmailIndex");
@@ -715,14 +710,10 @@ namespace Gateway.Persistence.Migrations
 
             modelBuilder.Entity("Gateway.Domain.Entities.ApplicationUser", b =>
                 {
-                    b.HasOne("Gateway.Domain.Entities.Merchant", null)
+                    b.HasOne("Gateway.Domain.Entities.Merchant", "Merchant")
                         .WithMany()
                         .HasForeignKey("MerchantId")
                         .OnDelete(DeleteBehavior.SetNull);
-
-                    b.HasOne("Gateway.Domain.Entities.Merchant", "Merchant")
-                        .WithMany()
-                        .HasForeignKey("MerchantId1");
 
                     b.Navigation("Merchant");
                 });

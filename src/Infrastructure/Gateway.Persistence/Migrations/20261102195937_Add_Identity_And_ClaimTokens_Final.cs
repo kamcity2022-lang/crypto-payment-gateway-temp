@@ -7,7 +7,7 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace Gateway.Persistence.Migrations
 {
     /// <inheritdoc />
-    public partial class Add_Identity_And_ClaimTokens_Fixed : Migration
+    public partial class Add_Identity_And_ClaimTokens_Final : Migration
     {
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
@@ -32,7 +32,6 @@ namespace Gateway.Persistence.Migrations
                 {
                     Id = table.Column<string>(type: "text", nullable: false),
                     MerchantId = table.Column<Guid>(type: "uuid", nullable: true),
-                    MerchantId1 = table.Column<Guid>(type: "uuid", nullable: true),
                     IsSuperAdmin = table.Column<bool>(type: "boolean", nullable: false),
                     UserName = table.Column<string>(type: "character varying(256)", maxLength: 256, nullable: true),
                     NormalizedUserName = table.Column<string>(type: "character varying(256)", maxLength: 256, nullable: true),
@@ -58,11 +57,6 @@ namespace Gateway.Persistence.Migrations
                         principalTable: "Merchants",
                         principalColumn: "Id",
                         onDelete: ReferentialAction.SetNull);
-                    table.ForeignKey(
-                        name: "FK_AspNetUsers_Merchants_MerchantId1",
-                        column: x => x.MerchantId1,
-                        principalTable: "Merchants",
-                        principalColumn: "Id");
                 });
 
             migrationBuilder.CreateTable(
@@ -222,11 +216,6 @@ namespace Gateway.Persistence.Migrations
                 name: "IX_AspNetUsers_MerchantId",
                 table: "AspNetUsers",
                 column: "MerchantId");
-
-            migrationBuilder.CreateIndex(
-                name: "IX_AspNetUsers_MerchantId1",
-                table: "AspNetUsers",
-                column: "MerchantId1");
 
             migrationBuilder.CreateIndex(
                 name: "UserNameIndex",
