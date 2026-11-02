@@ -155,13 +155,17 @@ public class InvoicesController : ControllerBase
     [RequireMerchantSignature]
     public async Task<IActionResult> GetInvoiceById(Guid invoiceId, CancellationToken ct)
     {
-        var merchantId = (Guid)HttpContext.Items["MerchantId"]!;
+        if (!HttpContext.Items.TryGetValue("ResolvedMerchantId", out var resolvedMerchantIdObj) || resolvedMerchantIdObj == null)
+        {
+            return Forbid(); // Missing or invalid tenant context
+        }
+        var merchantId = (Guid)resolvedMerchantIdObj;
 
         var invoice = await _dbContext.Invoices
             .FirstOrDefaultAsync(i => i.Id == invoiceId && i.MerchantId == merchantId, ct);
-
         if (invoice == null)
             return NotFound(new { error = "Invoice not found." });
+
 
         return Ok(new InvoiceResponseDto
         {
@@ -185,7 +189,9 @@ public class InvoicesController : ControllerBase
     [RequireMerchantSignature]
     public async Task<IActionResult> GetInvoices([FromQuery] InvoiceFilterRequest filter, CancellationToken ct)
     {
-        var merchantId = (Guid)HttpContext.Items["MerchantId"]!;
+        if (!HttpContext.Items.TryGetValue("ResolvedMerchantId", out var resolvedMerchantIdObj) || resolvedMerchantIdObj == null)
+            return Forbid();
+        var merchantId = (Guid)resolvedMerchantIdObj;
 
         var page = Math.Max(1, filter.Page);
         var pageSize = Math.Clamp(filter.PageSize, 1, 100);

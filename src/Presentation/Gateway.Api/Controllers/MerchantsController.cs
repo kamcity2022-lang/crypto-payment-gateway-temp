@@ -102,12 +102,13 @@ public class MerchantsController : ControllerBase
     [RequireMerchantSignature]
     public async Task<IActionResult> GetProfile(CancellationToken ct)
     {
-        var merchantId = (Guid)HttpContext.Items["MerchantId"]!;
+        if (!HttpContext.Items.TryGetValue("ResolvedMerchantId", out var resolvedMerchantIdObj) || resolvedMerchantIdObj == null)
+            return Forbid();
+        var merchantId = (Guid)resolvedMerchantIdObj;
 
         var merchant = await _dbContext.Merchants
             .AsNoTracking()
             .FirstOrDefaultAsync(m => m.Id == merchantId, ct);
-
         if (merchant == null)
             return NotFound(new { error = "Merchant profile not found." });
 

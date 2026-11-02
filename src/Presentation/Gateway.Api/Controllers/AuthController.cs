@@ -5,6 +5,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Gateway.Domain.Entities;
 using Gateway.Persistence;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -153,6 +154,26 @@ public class AuthController : ControllerBase
 
     // TODO: Re-implement in Task 2 with [Authorize(Roles = "SuperAdmin")] policy
     // and proper SuperAdmin bootstrap mechanism. Disabled for now to prevent public exposure.
+    
+    [HttpPost("admin/merchants/{merchantId:guid}/invite")]
+    [Authorize(Policy = "SuperAdminOnly")]
+    public async Task<IActionResult> GenerateInvite(Guid merchantId, CancellationToken ct)
+    {
+        var merchant = await _dbContext.Merchants.FindAsync(new object[] { merchantId }, ct);
+        if (merchant == null) return NotFound(new { error = "Merchant not found." });
+
+        var plainToken = Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
+        var tokenRecord = new MerchantClaimToken(merchantId, plainToken, TimeSpan.FromDays(7));
+    
+        _dbContext.MerchantClaimTokens.Add(tokenRecord);
+        await _dbContext.SaveChangesAsync(ct);
+
+        // Returned to the authorized SuperAdmin caller for secure out-of-band transmission
+        return Ok(new { 
+            message = "Invite token generated securely. Provide this to the user out-of-band.",
+            inviteToken = plainToken 
+        });
+    }
 
     private static string HashToken(string token)
     {

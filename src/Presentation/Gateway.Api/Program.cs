@@ -33,6 +33,18 @@ builder.Services.AddIdentity<ApplicationUser, IdentityRole>(options =>
 .AddEntityFrameworkStores<GatewayDbContext>()
 .AddDefaultTokenProviders();
 
+builder.Services.AddAuthorization(options =>
+{
+    options.AddPolicy("SuperAdminOnly", policy => policy.RequireRole("SuperAdmin"));
+    options.AddPolicy("MerchantOwner", policy => policy.RequireRole("Owner", "SuperAdmin").AddRequirements(new Gateway.Api.Authorization.MerchantIdRequirement()));
+    options.AddPolicy("MerchantAdmin", policy => policy.RequireRole("Owner", "Admin", "SuperAdmin").AddRequirements(new Gateway.Api.Authorization.MerchantIdRequirement()));
+    options.AddPolicy("MerchantDeveloper", policy => policy.RequireRole("Owner", "Admin", "Developer", "SuperAdmin").AddRequirements(new Gateway.Api.Authorization.MerchantIdRequirement()));
+    options.AddPolicy("MerchantViewer", policy => policy.RequireRole("Owner", "Admin", "Developer", "Viewer", "SuperAdmin").AddRequirements(new Gateway.Api.Authorization.MerchantIdRequirement()));
+});
+
+builder.Services.AddSingleton<Microsoft.AspNetCore.Authorization.IAuthorizationHandler, Gateway.Api.Authorization.MerchantIdHandler>();
+builder.Services.AddHostedService<Gateway.Api.Bootstrap.SuperAdminBootstrapService>();
+
 builder.Services.ConfigureApplicationCookie(options =>
 {
     options.Cookie.HttpOnly = true;

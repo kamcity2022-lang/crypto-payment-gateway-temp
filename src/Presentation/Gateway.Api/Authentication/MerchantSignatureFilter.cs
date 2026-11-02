@@ -111,6 +111,15 @@ public class RequireMerchantSignatureAttribute : Attribute, IAsyncActionFilter
         }
 
         context.HttpContext.Items["MerchantId"] = merchant.Id;
+        
+        var claims = new System.Collections.Generic.List<System.Security.Claims.Claim>
+        {
+            new System.Security.Claims.Claim("MerchantId", merchant.Id.ToString()),
+            new System.Security.Claims.Claim(System.Security.Claims.ClaimTypes.Role, "Owner")
+        };
+        var identity = new System.Security.Claims.ClaimsIdentity(claims, "HmacAuthentication");
+        context.HttpContext.User.AddIdentity(identity);
+        
         await next();
     }
 }
