@@ -59,37 +59,48 @@ public static class SsrfValidator
 
     private static bool IsProhibitedIPv6(IPAddress ip)
     {
-        if (IPAddress.IsLoopback(ip)) return true;
-        if (ip.Equals(IPAddress.IPv6None)) return true;
-        if (ip.IsIPv6LinkLocal) return true;
-        if (ip.IsIPv6Multicast) return true;
-        if (ip.IsIPv6SiteLocal) return true;
+        if (IPAddress.IsLoopback(ip)) return true; // ::1
+        if (ip.Equals(IPAddress.IPv6None)) return true; // ::
+        if (ip.IsIPv6LinkLocal) return true; // fe80::/10
+        if (ip.IsIPv6Multicast) return true; // ff00::/8
+        if (ip.IsIPv6SiteLocal) return true; // fec0::/10
 
         var b = ip.GetAddressBytes();
 
-        if ((b[0] & 0xFE) == 0xFC) return true; // ULA
-        if (b[0] == 0x20 && b[1] == 0x01 && b[2] == 0x0D && b[3] == 0xB8) return true; // Documentation
-        if (b[0] == 0x20 && b[1] == 0x01 && b[2] == 0x00 && b[3] == 0x00) return true; // Teredo
-        if (b[0] == 0x20 && b[1] == 0x02) return true; // 6to4
-        
+        // ULA fc00::/7
+        if ((b[0] & 0xFE) == 0xFC) return true;
+
+        // IPv4-compatible IPv6 ::/96 (Deprecated)
+        if (b[0] == 0 && b[1] == 0 && b[2] == 0 && b[3] == 0 &&
+            b[4] == 0 && b[5] == 0 && b[6] == 0 && b[7] == 0 &&
+            b[8] == 0 && b[9] == 0 && b[10] == 0 && b[11] == 0) return true;
+
+        // IETF Protocol Assignments 2001::/23 (includes Teredo, ORCHID, etc.)
+        if (b[0] == 0x20 && b[1] == 0x01 && (b[2] & 0xFE) == 0x00) return true;
+
+        // Documentation 2001:db8::/32
+        if (b[0] == 0x20 && b[1] == 0x01 && b[2] == 0x0D && b[3] == 0xB8) return true;
+
+        // 6to4 2002::/16
+        if (b[0] == 0x20 && b[1] == 0x02) return true;
+
         // NAT64 64:ff9b::/96
         if (b[0] == 0x00 && b[1] == 0x64 && b[2] == 0xFF && b[3] == 0x9B &&
             b[4] == 0 && b[5] == 0 && b[6] == 0 && b[7] == 0 && b[8] == 0 && b[9] == 0) return true;
 
-        // NAT64 well-known 64:ff9b:1::/48 (RFC 8215)
+        // NAT64 well-known 64:ff9b:1::/48
         if (b[0] == 0x00 && b[1] == 0x64 && b[2] == 0xFF && b[3] == 0x9B &&
             b[4] == 0x00 && b[5] == 0x01) return true;
 
-        // Discard 100::/64 (RFC 6666)
+        // Discard 100::/64
         if (b[0] == 0x01 && b[1] == 0x00 && b[2] == 0 && b[3] == 0 &&
             b[4] == 0 && b[5] == 0 && b[6] == 0 && b[7] == 0) return true;
 
-        // ORCHIDv2 2001:20::/28
-        if (b[0] == 0x20 && b[1] == 0x01 && b[2] == 0x00 && (b[3] & 0xF0) == 0x20) return true;
+        // 3fff::/20 (Documentation/Reserved)
+        if (b[0] == 0x3f && b[1] == 0xff && (b[2] & 0xF0) == 0) return true;
 
-        // Benchmarking BMWG 2001:2::/48
-        if (b[0] == 0x20 && b[1] == 0x01 && b[2] == 0x00 && b[3] == 0x02 &&
-            b[4] == 0 && b[5] == 0) return true;
+        // 5f00::/16 (Reserved/Special)
+        if (b[0] == 0x5f && b[1] == 0x00) return true;
 
         return false;
     }

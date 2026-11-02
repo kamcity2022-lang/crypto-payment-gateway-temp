@@ -208,4 +208,49 @@ public class TronScannerVerificationTests
         result.IsSuccess.Should().BeFalse();
     }
     
+    [Fact]
+    public async Task VerifySolidifiedTransaction_CorrectEventAtIndex1_ShouldSucceed()
+    {
+        var expectedAmount = 10_000_000L;
+        var amountHex = expectedAmount.ToString("x").PadLeft(64, '0');
+        var contractHex = TronAddressToHexTest(UsdtContract);
+        var recipientHex = TronAddressToHexTest(DepositAddress);
+
+        var dummyLog = new { address = "0000", topics = new[] { "0x11", "0x22", "0x33" }, data = "0x00" };
+        var correctLog = new {
+            address = contractHex,
+            topics = new[] { "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef", "0x00", "0x000000000000000000000000" + recipientHex },
+            data = "0x" + amountHex
+        };
+        
+        var responseBody = JsonSerializer.Serialize(new { blockNumber = 123456, receipt = new { result = "SUCCESS" }, log = new[] { dummyLog, correctLog } });
+        var service = CreateService(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(responseBody) });
+        
+        var result = await service.VerifySolidifiedTransactionAsync(TxHash, DepositAddress, expectedAmount, 1, CancellationToken.None);
+        result.IsSuccess.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task VerifySolidifiedTransaction_MatchingTransferAtWrongIndex_ShouldFail()
+    {
+        var expectedAmount = 10_000_000L;
+        var amountHex = expectedAmount.ToString("x").PadLeft(64, '0');
+        var contractHex = TronAddressToHexTest(UsdtContract);
+        var recipientHex = TronAddressToHexTest(DepositAddress);
+
+        var correctLog = new {
+            address = contractHex,
+            topics = new[] { "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef", "0x00", "0x000000000000000000000000" + recipientHex },
+            data = "0x" + amountHex
+        };
+        var dummyLog = new { address = "0000", topics = new[] { "0x11", "0x22", "0x33" }, data = "0x00" };
+        
+        // Correct log is at index 0, but we request index 1
+        var responseBody = JsonSerializer.Serialize(new { blockNumber = 123456, receipt = new { result = "SUCCESS" }, log = new[] { correctLog, dummyLog } });
+        var service = CreateService(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(responseBody) });
+        
+        var result = await service.VerifySolidifiedTransactionAsync(TxHash, DepositAddress, expectedAmount, 1, CancellationToken.None);
+        result.IsSuccess.Should().BeFalse();
+    }
+    
 }
