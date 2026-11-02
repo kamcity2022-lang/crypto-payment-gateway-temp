@@ -22,6 +22,7 @@ public class TronScannerService : ITronScannerService
     private readonly IConfiguration _configuration;
     private readonly ILogger<TronScannerService> _logger;
     private readonly string _usdtContractAddress;
+    private const string TransferTopicSignature = "ddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
 
     public TronScannerService(
         GatewayDbContext dbContext,
@@ -186,65 +187,158 @@ public class TronScannerService : ITronScannerService
     }
 
     public async Task<(bool IsSolidified, bool IsSuccess, ulong BlockNumber)> VerifySolidifiedTransactionAsync(
-        string txHash, string expectedToAddress, long expectedAmountUnits, int expectedEventIndex, CancellationToken ct)
+    string txHash, string expectedToAddress, long expectedAmountUnits, int expectedEventIndex, CancellationToken ct)
+{
+    try
     {
+        if (string.IsNullOrWhiteSpace(txHash)) return (false, false, 0);
+        if (expectedAmountUnits <= 0) return (false, false, 0);
+        if (expectedEventIndex < 0) return (false, false, 0); // کران پایین معتبر
+
+        var jsonPayload = JsonSerializer.Serialize(new { value = txHash });
+        using var content = new StringContent(jsonPayload, Encoding.UTF8, "application/json");
+        var res = await _httpClient.PostAsync("https://api.trongrid.io/walletsolidity/gettransactioninfobyid", content, ct);
+        if (!res.IsSuccessStatusCode) return (false, false, 0);
+
+        var json = await res.Content.ReadAsStringAsync(ct);
+        using var doc = JsonDocument.Parse(json);
+
+        if (doc.RootElement.ValueKind != JsonValueKind.Object ||
+            !doc.RootElement.TryGetProperty("blockNumber", out var bNum)) return (false, false, 0);
+
+        ulong blockNumber = (ulong)bNum.GetInt64();
+        if (blockNumber == 0) return (false, false, 0); // هنوز جامد نشده
+
+        if (!doc.RootElement.TryGetProperty("receipt", out var receipt) ||
+            !receipt.TryGetProperty("result", out var resultStr) ||
+            !string.Equals(resultStr.GetString(), "SUCCESS", StringComparison.OrdinalIgnoreCase))
+            return (true, false, blockNumber);
+
+        if (!doc.RootElement.TryGetProperty("log", out var logs) || logs.GetArrayLength() == 0)
+            return (true, false, blockNumber);
+
+        // کران بالای event_index نسبت به تعداد واقعی لاگ‌ها
+        if (expectedEventIndex >= logs.GetArrayLength())
+        {
+            _logger.LogWarning("event_index {Idx} out of bounds (logs={Count}) for tx {Tx}. Rejecting.",
+                expectedEventIndex, logs.GetArrayLength(), txHash);
+            return (true, false, blockNumber);
+        }
+
+        string expectedContractHex;
+        string expectedRecipientHex;
         try
         {
-            var jsonPayload = JsonSerializer.Serialize(new { value = txHash });
-            using var content = new StringContent(jsonPayload, Encoding.UTF8, "application/json");
-            var res = await _httpClient.PostAsync("https://api.trongrid.io/walletsolidity/gettransactioninfobyid", content, ct);
-            if (!res.IsSuccessStatusCode) return (false, false, 0);
-
-            var json = await res.Content.ReadAsStringAsync(ct);
-            using var doc = JsonDocument.Parse(json);
-
-            if (doc.RootElement.ValueKind != JsonValueKind.Object || !doc.RootElement.TryGetProperty("blockNumber", out var bNum)) return (false, false, 0);
-            ulong blockNumber = (ulong)bNum.GetInt64();
-            if (blockNumber == 0) return (false, false, 0);
-
-            if (!doc.RootElement.TryGetProperty("receipt", out var receipt) || !receipt.TryGetProperty("result", out var resultStr) || !string.Equals(resultStr.GetString(), "SUCCESS", StringComparison.OrdinalIgnoreCase))
-                return (true, false, blockNumber);
-
-            if (!doc.RootElement.TryGetProperty("log", out var logs) || logs.GetArrayLength() == 0) return (true, false, blockNumber);
-
-            var expectedContractHex = TronAddressToHex(_usdtContractAddress);
-            var expectedRecipientEvmHex = TronAddressToHex(expectedToAddress);
-            int matchCount = 0;
-            bool matched = false;
-
-            foreach (var log in logs.EnumerateArray())
-            {
-                var contractAddress = log.TryGetProperty("address", out var cAddr) ? cAddr.GetString() : null;
-                if (string.IsNullOrEmpty(contractAddress)) continue;
-
-                var logContractHex = contractAddress.StartsWith("41") && contractAddress.Length == 42 ? contractAddress[2..] : (contractAddress.StartsWith("0x") && contractAddress.Length == 42 ? contractAddress[2..] : contractAddress);
-                if (!string.Equals(logContractHex, expectedContractHex, StringComparison.OrdinalIgnoreCase)) continue;
-
-                if (!log.TryGetProperty("topics", out var topics) || topics.GetArrayLength() < 3) continue;
-                var signature = topics[0].GetString();
-                if (!string.Equals(signature, "ddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef", StringComparison.OrdinalIgnoreCase)) continue;
-
-                var recipientTopicHex = topics[2].GetString() ?? string.Empty;
-                if (recipientTopicHex.Length < 40) continue;
-                var recipientEvmAddress = recipientTopicHex[^40..];
-                if (!string.Equals(recipientEvmAddress, expectedRecipientEvmHex, StringComparison.OrdinalIgnoreCase)) continue;
-
-                if (!log.TryGetProperty("data", out var dataProp)) continue;
-                var dataHex = dataProp.GetString() ?? string.Empty;
-                if (string.IsNullOrWhiteSpace(dataHex)) continue;
-                if (dataHex.StartsWith("0x", StringComparison.OrdinalIgnoreCase)) dataHex = dataHex[2..];
-
-                if (!System.Numerics.BigInteger.TryParse(dataHex, System.Globalization.NumberStyles.HexNumber, null, out var parsedBigInt)) continue;
-                if (parsedBigInt < 0 || parsedBigInt > long.MaxValue || (long)parsedBigInt != expectedAmountUnits) continue;
-
-                matchCount++;
-                if (matchCount > 1) return (true, false, blockNumber); // Ambiguous matches rejected
-                matched = true;
-            }
-            return (true, matched, blockNumber);
+            expectedContractHex = TronAddressToHex(_usdtContractAddress);
+            expectedRecipientHex = TronAddressToHex(expectedToAddress);
         }
-        catch (Exception ex) { _logger.LogError(ex, "Error verifying tx {TxHash}", txHash); return (false, false, 0); }
+        catch (Exception)
+        {
+            return (false, false, 0);
+        }
+
+        // شمارش رویدادهای منطبق برای تشخیص ابهام
+        int matchCount = 0;
+
+        foreach (var log in logs.EnumerateArray())
+        {
+            if (!IsMatchingUsdtTransfer(log, expectedContractHex, expectedRecipientHex, expectedAmountUnits))
+                continue;
+
+            matchCount++;
+            if (matchCount > 1)
+            {
+                // بیش از یک رویداد منطبق -> ابهام -> رد امن
+                _logger.LogWarning("Ambiguous TRC20 matches ({Count}) in tx {Tx}. Rejecting.", matchCount, txHash);
+                return (true, false, blockNumber);
+            }
+        }
+
+        if (matchCount != 1) return (true, false, blockNumber);
+        return (true, true, blockNumber);
     }
+    catch (Exception ex)
+    {
+        _logger.LogError(ex, "Error verifying tx {TxHash}", txHash);
+        return (false, false, 0);
+    }
+}
+
+private bool IsMatchingUsdtTransfer(JsonElement log, string expectedContractHex, string expectedRecipientHex, long expectedAmountUnits)
+{
+    // --- آدرس قرارداد ---
+    if (!log.TryGetProperty("address", out var cAddr)) return false;
+    var contractRaw = cAddr.GetString();
+    if (string.IsNullOrWhiteSpace(contractRaw)) return false;
+    var contractHex = NormalizeHexAddress(contractRaw);
+    if (contractHex == null || !string.Equals(contractHex, expectedContractHex, StringComparison.OrdinalIgnoreCase)) return false;
+
+    // --- topics ---
+    if (!log.TryGetProperty("topics", out var topics) || topics.GetArrayLength() < 3) return false;
+
+    // topics[0]: امضای Transfer — نرمال‌سازی 0x و اعتبارسنجی هگز
+    var sigRaw = topics[0].GetString();
+    var sig = NormalizeTopicHex(sigRaw);
+    if (sig == null || !string.Equals(sig, TransferTopicSignature, StringComparison.OrdinalIgnoreCase)) return false;
+
+    // topics[2]: گیرنده — باید دقیقاً ۶۴ کاراکتر هگز باشد
+    var recipientTopicRaw = topics[2].GetString();
+    var recipientTopic = NormalizeTopicHex(recipientTopicRaw);
+    if (recipientTopic == null || recipientTopic.Length != 64) return false;
+    var recipientEvm = recipientTopic.Substring(24); // ۲۴ کاراکتر اول صفر پد، ۴۰ کاراکتر آخر آدرس
+    if (!string.Equals(recipientEvm, expectedRecipientHex, StringComparison.OrdinalIgnoreCase)) return false;
+
+    // --- data: مبلغ uint256 ---
+    if (!log.TryGetProperty("data", out var dataProp)) return false;
+    var dataHex = StripHexPrefix(dataProp.GetString());
+    if (string.IsNullOrWhiteSpace(dataHex)) return false;
+    if (!IsHex(dataHex)) return false;
+
+    if (!System.Numerics.BigInteger.TryParse(dataHex, System.Globalization.NumberStyles.HexNumber, null, out var parsed))
+        return false;
+
+    // منفی، سرریز، یا خارج از محدوده مبلغ پشتیبانی‌شده -> رد
+    if (parsed < 0 || parsed > long.MaxValue) return false;
+    if ((long)parsed != expectedAmountUnits) return false;
+
+    return true;
+}
+
+private static string? NormalizeTopicHex(string? raw)
+{
+    var s = StripHexPrefix(raw);
+    if (string.IsNullOrEmpty(s) || !IsHex(s)) return null;
+    return s.ToLowerInvariant();
+}
+
+private static string? NormalizeHexAddress(string? raw)
+{
+    var s = StripHexPrefix(raw);
+    if (string.IsNullOrEmpty(s)) return null;
+    // آدرس ۴۱‌دار ترون (۴۲ کاراکتر با 41) -> حذف پیشوند 41
+    if (s.Length == 42 && s.StartsWith("41", StringComparison.OrdinalIgnoreCase))
+        s = s.Substring(2);
+    if (s.Length != 40 || !IsHex(s)) return null;
+    return s.ToLowerInvariant();
+}
+
+private static string? StripHexPrefix(string? s)
+{
+    if (string.IsNullOrWhiteSpace(s)) return null;
+    s = s.Trim();
+    if (s.StartsWith("0x", StringComparison.OrdinalIgnoreCase)) s = s.Substring(2);
+    return s;
+}
+
+private static bool IsHex(string s)
+{
+    foreach (var c in s)
+    {
+        bool ok = (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+        if (!ok) return false;
+    }
+    return true;
+}
 
     private static string TronAddressToHex(string base58Address)
     {

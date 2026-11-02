@@ -2,6 +2,7 @@
 Files Structure
 ================================================================
 .dockerignore
+.github/workflows/dotnet-ci.yml
 .gitignore
 CryptoPaymentGateway.slnx
 docs/adr/0001-database-and-blockchain-decisions.md
@@ -48,6 +49,8 @@ src/Infrastructure/Gateway.Persistence/Migrations/20261101183414_Add_Idempotency
 src/Infrastructure/Gateway.Persistence/Migrations/20261101183414_Add_Idempotency_Keys_Table.Designer.cs
 src/Infrastructure/Gateway.Persistence/Migrations/20261101191932_Add_Outbox_Lease_Locking.cs
 src/Infrastructure/Gateway.Persistence/Migrations/20261101191932_Add_Outbox_Lease_Locking.Designer.cs
+src/Infrastructure/Gateway.Persistence/Migrations/20261101200337_Add_Merchant_DefaultWebhookUrl.cs
+src/Infrastructure/Gateway.Persistence/Migrations/20261101200337_Add_Merchant_DefaultWebhookUrl.Designer.cs
 src/Infrastructure/Gateway.Persistence/Migrations/GatewayDbContextModelSnapshot.cs
 src/Presentation/Gateway.Api/appsettings.Development.json
 src/Presentation/Gateway.Api/appsettings.json
@@ -78,6 +81,7 @@ tests/Gateway.Blockchain.Tron.Tests/SettlementAndSweepTests.cs
 tests/Gateway.Blockchain.Tron.Tests/SsrfProtectionTests.cs
 tests/Gateway.Blockchain.Tron.Tests/TronAddressDerivationTests.cs
 tests/Gateway.Blockchain.Tron.Tests/TronKnownVectorsAndHardeningTests.cs
+tests/Gateway.Blockchain.Tron.Tests/TronScannerVerificationTests.cs
 tests/Gateway.Blockchain.Tron.Tests/WebhookManagementTests.cs
 tests/Gateway.Domain.Tests/Gateway.Domain.Tests.csproj
 tests/Gateway.Domain.Tests/UnitTest1.cs
@@ -119,6 +123,37 @@ README.md
 **/.screenshots
 **/.idea
 **/*.md
+
+================
+File: .github/workflows/dotnet-ci.yml
+================
+name: .NET 10 Build & Test
+
+on:
+  push:
+    branches: [ "master", "main" ]
+  pull_request:
+    branches: [ "master", "main" ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: '10.0.x'
+
+    - name: Restore dependencies
+      run: dotnet restore
+
+    - name: Build
+      run: dotnet build --no-restore
+
+    - name: Test
+      run: dotnet test --no-build --verbosity normal
 
 ================
 File: .gitignore
@@ -770,6 +805,16 @@ public class Merchant
 
     private Merchant() { } // Required for ORM
 
+    public string? DefaultWebhookUrl { get; private set; }
+
+    public void SetDefaultWebhookUrl(string webhookUrl)
+    {
+        if (!string.IsNullOrWhiteSpace(webhookUrl))
+        {
+            DefaultWebhookUrl = webhookUrl.Trim();
+        }
+    }
+    
     public Merchant(Guid id, string name, string apiKeyHash, string encryptedApiKeySecret, string encryptedWebhookSecret)
     {
         Id = id == Guid.Empty ? Guid.NewGuid() : id;
@@ -933,6 +978,7 @@ public class OutboxEvent
 
     public void RecordSuccess()
     {
+        AttemptCount++;
         IsProcessed = true;
         NextAttemptAtUtc = null;
         LockedUntilUtc = null;
@@ -1442,6 +1488,7 @@ public class TronScannerService : ITronScannerService
 {
     private readonly GatewayDbContext _dbContext;
     private readonly HttpClient _httpClient;
+    private readonly IConfiguration _configuration;
     private readonly ILogger<TronScannerService> _logger;
     private readonly string _usdtContractAddress;
 
@@ -1453,9 +1500,10 @@ public class TronScannerService : ITronScannerService
     {
         _dbContext = dbContext;
         _httpClient = httpClient;
+        _configuration = configuration;
         _logger = logger;
         _usdtContractAddress = configuration["Tron:UsdtContractAddress"] 
-            ?? throw new InvalidOperationException("Configuration 'Tron:UsdtContractAddress' is required.");
+                               ?? throw new InvalidOperationException("Configuration 'Tron:UsdtContractAddress' is required.");
     }
 
     public async Task ScanPendingDepositsAsync(CancellationToken cancellationToken)
@@ -1468,10 +1516,10 @@ public class TronScannerService : ITronScannerService
         }
 
         var now = DateTime.UtcNow;
-
-        // Explicit configurable monitoring policies
-        var latePaymentRetention = now.AddDays(-30);    // Monitor expired invoices for 30 days for late payments
-        var overpaymentRetention = now.AddDays(-7);     // Monitor paid invoices for 7 days for overpayments
+        var lateDays = int.TryParse(_configuration["Tron:Scanner:LatePaymentRetentionDays"], out var l) ? l : 30;
+        var overDays = int.TryParse(_configuration["Tron:Scanner:OverpaymentRetentionDays"], out var o) ? o : 7;
+        var latePaymentRetention = now.AddDays(-lateDays);
+        var overpaymentRetention = now.AddDays(-overDays);
 
         var invoices = await _dbContext.Invoices
             .Include(i => i.Transfers)
@@ -1483,9 +1531,7 @@ public class TronScannerService : ITronScannerService
             .ToListAsync(cancellationToken);
 
         foreach (var invoice in invoices)
-        {
             await ScanInvoiceWithPaginationAsync(invoice, solidifiedBlockNumber, cancellationToken);
-        }
 
         await _dbContext.SaveChangesAsync(cancellationToken);
     }
@@ -1507,59 +1553,40 @@ public class TronScannerService : ITronScannerService
         while (hasMorePages)
         {
             var url = $"https://api.trongrid.io/v1/accounts/{invoice.DepositAddress}/transactions/trc20?contract_address={_usdtContractAddress}&limit=20";
-            if (!string.IsNullOrEmpty(fingerprint))
-            {
-                url += $"&fingerprint={Uri.EscapeDataString(fingerprint)}";
-            }
-            else if (cursor.LastProcessedBlockTimestamp > 0)
-            {
-                url += $"&min_timestamp={cursor.LastProcessedBlockTimestamp}";
-            }
+            if (!string.IsNullOrEmpty(fingerprint)) url += $"&fingerprint={Uri.EscapeDataString(fingerprint)}";
+            else if (cursor.LastProcessedBlockTimestamp > 0) url += $"&min_timestamp={cursor.LastProcessedBlockTimestamp}";
 
             using var request = new HttpRequestMessage(HttpMethod.Get, url);
             using var response = await _httpClient.SendAsync(request, ct);
 
-            if (!response.IsSuccessStatusCode)
-            {
-                _logger.LogWarning("TronGrid query returned HTTP {Status} for address {Address}. Cursor not advanced.", response.StatusCode, invoice.DepositAddress);
-                return; // Fail-closed: Stop pagination without advancing cursor
-            }
+            if (!response.IsSuccessStatusCode) return;
 
             var json = await response.Content.ReadAsStringAsync(ct);
             using var doc = JsonDocument.Parse(json);
 
             if (!doc.RootElement.TryGetProperty("data", out var dataElement) || dataElement.GetArrayLength() == 0)
             {
+                cursor.SetFingerprint(null);
                 break;
             }
 
             foreach (var item in dataElement.EnumerateArray())
             {
                 var toAddress = item.GetProperty("to").GetString() ?? string.Empty;
-                if (!string.Equals(toAddress, invoice.DepositAddress, StringComparison.OrdinalIgnoreCase))
-                    continue;
+                if (!string.Equals(toAddress, invoice.DepositAddress, StringComparison.OrdinalIgnoreCase)) continue;
 
                 var txHash = item.GetProperty("transaction_id").GetString() ?? string.Empty;
                 if (string.IsNullOrEmpty(txHash)) continue;
 
-                if (!item.TryGetProperty("event_index", out var idxEl) || !idxEl.TryGetInt32(out var eventIndex))
-                {
-                    _logger.LogError("Transfer event_index could not be determined for Tx {TxHash}. Skipping to prevent duplicate accounting.", txHash);
-                    continue;
-                }
+                if (!item.TryGetProperty("event_index", out var idxEl) || !idxEl.TryGetInt32(out var eventIndex)) continue;
 
                 var rawValueStr = item.GetProperty("value").GetString() ?? "0";
                 if (!long.TryParse(rawValueStr, out var amountUnits) || amountUnits <= 0) continue;
 
                 var blockTimestamp = item.GetProperty("block_timestamp").GetInt64();
 
-                // Fail-Closed Validation via SolidityNode
-                var txDetail = await VerifySolidifiedTransactionAsync(txHash, ct);
-                if (!txDetail.IsSolidified || !txDetail.IsSuccess)
-                {
-                    _logger.LogWarning("Tx {TxHash} rejected: IsSolidified={Solidified}, IsSuccess={Success}.", txHash, txDetail.IsSolidified, txDetail.IsSuccess);
-                    continue;
-                }
+                var txDetail = await VerifySolidifiedTransactionAsync(txHash, invoice.DepositAddress, amountUnits, eventIndex, ct);
+                if (!txDetail.IsSolidified || !txDetail.IsSuccess) continue;
 
                 var existingTransfer = await _dbContext.PaymentTransfers
                     .FirstOrDefaultAsync(t => t.Network == "TRON" && t.TransactionHash == txHash && t.TransferIndex == eventIndex, ct);
@@ -1567,21 +1594,10 @@ public class TronScannerService : ITronScannerService
                 if (existingTransfer == null)
                 {
                     var fromAddress = item.GetProperty("from").GetString() ?? string.Empty;
-                    var transfer = new PaymentTransfer(
-                        invoice.Id,
-                        "TRON",
-                        txHash,
-                        eventIndex,
-                        _usdtContractAddress,
-                        fromAddress,
-                        toAddress,
-                        amountUnits,
-                        txDetail.BlockNumber);
-
+                    var transfer = new PaymentTransfer(invoice.Id, "TRON", txHash, eventIndex, _usdtContractAddress, fromAddress, toAddress, amountUnits, txDetail.BlockNumber);
                     _dbContext.PaymentTransfers.Add(transfer);
-                    var registered = invoice.RegisterTransfer(transfer);
-
-                    if (registered)
+                    
+                    if (invoice.RegisterTransfer(transfer))
                     {
                         transfer.UpdateConfirmations(solidifiedBlockNumber, 1);
                         var previousStatus = invoice.Status;
@@ -1592,41 +1608,25 @@ public class TronScannerService : ITronScannerService
                             var merchant = await _dbContext.Merchants.FindAsync(new object[] { invoice.MerchantId }, ct);
                             if (merchant != null)
                             {
-                                var payload = JsonSerializer.Serialize(new
-                                {
+                                var payload = JsonSerializer.Serialize(new {
                                     @event = $"invoice.{currentStatus.ToString().ToLowerInvariant()}",
-                                    invoiceId = invoice.Id,
-                                    status = currentStatus.ToString(),
-                                    paidUnits = invoice.PaidAmountUnits,
-                                    expectedUnits = invoice.ExpectedAmountUnits,
-                                    txHash = txHash
+                                    invoiceId = invoice.Id, status = currentStatus.ToString(),
+                                    paidUnits = invoice.PaidAmountUnits, expectedUnits = invoice.ExpectedAmountUnits, txHash = txHash
                                 });
-
-                                var outbox = new OutboxEvent(
-                                    invoice.Id,
-                                    $"invoice.{currentStatus.ToString().ToLowerInvariant()}",
-                                    payload,
-                                    invoice.CallbackUrl,
-                                    merchant.EncryptedWebhookSecret);
-
-                                _dbContext.OutboxEvents.Add(outbox);
+                                _dbContext.OutboxEvents.Add(new OutboxEvent(invoice.Id, $"invoice.{currentStatus.ToString().ToLowerInvariant()}", payload, invoice.CallbackUrl, merchant.EncryptedWebhookSecret));
                             }
                         }
                     }
                 }
                 else
                 {
-                    // Reconcile confirmations
                     existingTransfer.UpdateConfirmations(solidifiedBlockNumber, 1);
                     invoice.EvaluateStatus();
                 }
-
                 cursor.UpdateCursor(blockTimestamp, txDetail.BlockNumber);
             }
 
-            if (doc.RootElement.TryGetProperty("meta", out var meta) &&
-                meta.TryGetProperty("fingerprint", out var fpProp) &&
-                !string.IsNullOrWhiteSpace(fpProp.GetString()))
+            if (doc.RootElement.TryGetProperty("meta", out var meta) && meta.TryGetProperty("fingerprint", out var fpProp) && !string.IsNullOrWhiteSpace(fpProp.GetString()))
             {
                 fingerprint = fpProp.GetString();
                 cursor.SetFingerprint(fingerprint);
@@ -1645,62 +1645,100 @@ public class TronScannerService : ITronScannerService
         {
             var res = await _httpClient.GetAsync("https://api.trongrid.io/walletsolidity/getnowblock", ct);
             if (!res.IsSuccessStatusCode) return 0;
-
             var json = await res.Content.ReadAsStringAsync(ct);
             using var doc = JsonDocument.Parse(json);
-            if (doc.RootElement.TryGetProperty("block_header", out var header) &&
-                header.TryGetProperty("raw_data", out var raw) &&
-                raw.TryGetProperty("number", out var num))
-            {
+            if (doc.RootElement.TryGetProperty("block_header", out var header) && header.TryGetProperty("raw_data", out var raw) && raw.TryGetProperty("number", out var num))
                 return (ulong)num.GetInt64();
-            }
         }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to query solidified head block from TronGrid.");
-        }
+        catch (Exception ex) { _logger.LogError(ex, "Failed to query solidified head block."); }
         return 0;
     }
 
-    public async Task<(bool IsSolidified, bool IsSuccess, ulong BlockNumber)> VerifySolidifiedTransactionAsync(string txHash, CancellationToken ct)
+    public async Task<(bool IsSolidified, bool IsSuccess, ulong BlockNumber)> VerifySolidifiedTransactionAsync(
+        string txHash, string expectedToAddress, long expectedAmountUnits, int expectedEventIndex, CancellationToken ct)
     {
         try
         {
             var jsonPayload = JsonSerializer.Serialize(new { value = txHash });
             using var content = new StringContent(jsonPayload, Encoding.UTF8, "application/json");
-            
             var res = await _httpClient.PostAsync("https://api.trongrid.io/walletsolidity/gettransactioninfobyid", content, ct);
-
             if (!res.IsSuccessStatusCode) return (false, false, 0);
 
             var json = await res.Content.ReadAsStringAsync(ct);
             using var doc = JsonDocument.Parse(json);
 
-            // Fail-closed validation
-            if (doc.RootElement.ValueKind != JsonValueKind.Object ||
-                !doc.RootElement.TryGetProperty("blockNumber", out var bNum))
-            {
-                return (false, false, 0);
-            }
-
+            if (doc.RootElement.ValueKind != JsonValueKind.Object || !doc.RootElement.TryGetProperty("blockNumber", out var bNum)) return (false, false, 0);
             ulong blockNumber = (ulong)bNum.GetInt64();
             if (blockNumber == 0) return (false, false, 0);
 
-            // Receipt must exist and explicitly equal SUCCESS
-            if (!doc.RootElement.TryGetProperty("receipt", out var receipt) ||
-                !receipt.TryGetProperty("result", out var resultStr) ||
-                !string.Equals(resultStr.GetString(), "SUCCESS", StringComparison.OrdinalIgnoreCase))
-            {
+            if (!doc.RootElement.TryGetProperty("receipt", out var receipt) || !receipt.TryGetProperty("result", out var resultStr) || !string.Equals(resultStr.GetString(), "SUCCESS", StringComparison.OrdinalIgnoreCase))
                 return (true, false, blockNumber);
-            }
 
-            return (true, true, blockNumber);
+            if (!doc.RootElement.TryGetProperty("log", out var logs) || logs.GetArrayLength() == 0) return (true, false, blockNumber);
+
+            var expectedContractHex = TronAddressToHex(_usdtContractAddress);
+            var expectedRecipientEvmHex = TronAddressToHex(expectedToAddress);
+            int matchCount = 0;
+            bool matched = false;
+
+            foreach (var log in logs.EnumerateArray())
+            {
+                var contractAddress = log.TryGetProperty("address", out var cAddr) ? cAddr.GetString() : null;
+                if (string.IsNullOrEmpty(contractAddress)) continue;
+
+                var logContractHex = contractAddress.StartsWith("41") && contractAddress.Length == 42 ? contractAddress[2..] : (contractAddress.StartsWith("0x") && contractAddress.Length == 42 ? contractAddress[2..] : contractAddress);
+                if (!string.Equals(logContractHex, expectedContractHex, StringComparison.OrdinalIgnoreCase)) continue;
+
+                if (!log.TryGetProperty("topics", out var topics) || topics.GetArrayLength() < 3) continue;
+                var signature = topics[0].GetString();
+                if (!string.Equals(signature, "ddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef", StringComparison.OrdinalIgnoreCase)) continue;
+
+                var recipientTopicHex = topics[2].GetString() ?? string.Empty;
+                if (recipientTopicHex.Length < 40) continue;
+                var recipientEvmAddress = recipientTopicHex[^40..];
+                if (!string.Equals(recipientEvmAddress, expectedRecipientEvmHex, StringComparison.OrdinalIgnoreCase)) continue;
+
+                if (!log.TryGetProperty("data", out var dataProp)) continue;
+                var dataHex = dataProp.GetString() ?? string.Empty;
+                if (string.IsNullOrWhiteSpace(dataHex)) continue;
+                if (dataHex.StartsWith("0x", StringComparison.OrdinalIgnoreCase)) dataHex = dataHex[2..];
+
+                if (!System.Numerics.BigInteger.TryParse(dataHex, System.Globalization.NumberStyles.HexNumber, null, out var parsedBigInt)) continue;
+                if (parsedBigInt < 0 || parsedBigInt > long.MaxValue || (long)parsedBigInt != expectedAmountUnits) continue;
+
+                matchCount++;
+                if (matchCount > 1) return (true, false, blockNumber); // Ambiguous matches rejected
+                matched = true;
+            }
+            return (true, matched, blockNumber);
         }
-        catch (Exception ex)
+        catch (Exception ex) { _logger.LogError(ex, "Error verifying tx {TxHash}", txHash); return (false, false, 0); }
+    }
+
+    private static string TronAddressToHex(string base58Address)
+    {
+        var bytes = Base58CheckDecode(base58Address);
+        return Convert.ToHexString(bytes.AsSpan(1)).ToLowerInvariant();
+    }
+
+    private static byte[] Base58CheckDecode(string base58)
+    {
+        const string alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+        var intData = System.Numerics.BigInteger.Zero;
+        for (var i = 0; i < base58.Length; i++)
         {
-            _logger.LogError(ex, "Error verifying solidified transaction {TxHash}", txHash);
-            return (false, false, 0);
+            var index = alphabet.IndexOf(base58[i]);
+            if (index < 0) throw new FormatException();
+            intData = intData * 58 + index;
         }
+        var bytes = intData.ToByteArray(isUnsigned: true, isBigEndian: true);
+        var leadingZeros = 0;
+        for (var i = 0; i < base58.Length && base58[i] == '1'; i++) leadingZeros++;
+        var result = new byte[leadingZeros + bytes.Length];
+        Buffer.BlockCopy(bytes, 0, result, leadingZeros, bytes.Length);
+        var payload = new byte[result.Length - 4];
+        Buffer.BlockCopy(result, 0, payload, 0, payload.Length);
+        return payload;
     }
 }
 
@@ -1964,64 +2002,52 @@ public static class SsrfValidator
 {
     public static bool IsDestinationSafe(string urlString, bool allowHttp = false, bool allowLoopbackForTesting = false)
     {
-        if (!Uri.TryCreate(urlString, UriKind.Absolute, out var uri))
-            return false;
-
-        if (uri.Scheme != Uri.UriSchemeHttps && (!allowHttp || uri.Scheme != Uri.UriSchemeHttp))
-            return false;
-
-        if (!allowLoopbackForTesting && uri.IsLoopback) 
-            return false;
+        if (!Uri.TryCreate(urlString, UriKind.Absolute, out var uri)) return false;
+        if (uri.Scheme != Uri.UriSchemeHttps && (!allowHttp || uri.Scheme != Uri.UriSchemeHttp)) return false;
+        if (!allowLoopbackForTesting && uri.IsLoopback) return false;
 
         try
         {
             var ips = Dns.GetHostAddresses(uri.DnsSafeHost);
             if (ips.Length == 0) return false;
-
             foreach (var ip in ips)
             {
-                if (allowLoopbackForTesting && IPAddress.IsLoopback(ip))
-                    continue;
-
-                if (IsProhibitedIp(ip))
-                    return false;
+                if (allowLoopbackForTesting && IPAddress.IsLoopback(ip)) continue;
+                if (IsProhibitedIp(ip)) return false;
             }
             return true;
         }
-        catch
-        {
-            return false;
-        }
+        catch { return false; }
     }
 
     public static bool IsProhibitedIp(IPAddress ip)
     {
-        if (ip.IsIPv4MappedToIPv6)
-            ip = ip.MapToIPv4();
-
-        if (IPAddress.IsLoopback(ip)) return true;
+        if (ip.IsIPv4MappedToIPv6) ip = ip.MapToIPv4();
+        
+        // IsLoopback is a static method
+        if (IPAddress.IsLoopback(ip)) return true; 
+        
+        // IsIPv6SiteLocal, IsIPv6LinkLocal, IsIPv6Multicast are instance properties!
+        if (ip.IsIPv6SiteLocal) return true; 
 
         if (ip.AddressFamily == AddressFamily.InterNetwork)
         {
             var b = ip.GetAddressBytes();
-            if (b[0] == 0) return true;
+            if (b[0] == 0) return true; // 0.0.0.0/8
             if (b[0] == 10) return true; // 10.0.0.0/8
             if (b[0] == 127) return true; // 127.0.0.0/8
             if (b[0] == 169 && b[1] == 254) return true; // 169.254.0.0/16 Link-Local & Cloud Metadata
             if (b[0] == 172 && b[1] >= 16 && b[1] <= 31) return true; // 172.16.0.0/12
             if (b[0] == 192 && b[1] == 168) return true; // 192.168.0.0/16
-            if (b[0] >= 224) return true; // Multicast & Reserved (224.0.0.0/4)
+            if (b[0] >= 224) return true; // Multicast & Reserved
         }
         else if (ip.AddressFamily == AddressFamily.InterNetworkV6)
         {
             if (ip.Equals(IPAddress.IPv6Loopback) || ip.Equals(IPAddress.IPv6None)) return true;
-            if (ip.IsIPv6LinkLocal || ip.IsIPv6SiteLocal || ip.IsIPv6Multicast) return true;
-
+            if (ip.IsIPv6LinkLocal || ip.IsIPv6Multicast) return true;
             var b = ip.GetAddressBytes();
-            // Unique Local Address fc00::/7
-            if ((b[0] & 0xfe) == 0xfc) return true;
+            if ((b[0] & 0xfe) == 0xfc) return true; // ULA fc00::/7
         }
-
         return false;
     }
 }
@@ -2030,7 +2056,9 @@ public static class SsrfValidator
 File: src/Infrastructure/Gateway.Infrastructure/Webhooks/WebhookDispatcher.cs
 ================
 using System;
+using System.Net;
 using System.Net.Http;
+using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
@@ -2050,11 +2078,7 @@ public class WebhookDispatcher : IWebhookDispatcher
     private readonly ISecretProtector _secretProtector;
     private readonly ILogger<WebhookDispatcher> _logger;
 
-    public WebhookDispatcher(
-        GatewayDbContext dbContext,
-        HttpClient httpClient,
-        ISecretProtector secretProtector,
-        ILogger<WebhookDispatcher> logger)
+    public WebhookDispatcher(GatewayDbContext dbContext, HttpClient httpClient, ISecretProtector secretProtector, ILogger<WebhookDispatcher> logger)
     {
         _dbContext = dbContext;
         _httpClient = httpClient;
@@ -2065,106 +2089,70 @@ public class WebhookDispatcher : IWebhookDispatcher
     public async Task DispatchPendingWebhooksAsync(CancellationToken cancellationToken)
     {
         var now = DateTime.UtcNow;
-
-        // Atomic claim using row-level locking (FOR UPDATE SKIP LOCKED) to guarantee multi-worker safety
         await using var tx = await _dbContext.Database.BeginTransactionAsync(cancellationToken);
 
         var pendingEvent = await _dbContext.OutboxEvents
             .FromSqlInterpolated($@"
                 SELECT * FROM ""OutboxEvents""
-                WHERE ""IsProcessed"" = FALSE
-                  AND ""NextAttemptAtUtc"" IS NOT NULL
-                  AND ""NextAttemptAtUtc"" <= {now}
+                WHERE ""IsProcessed"" = FALSE AND ""NextAttemptAtUtc"" IS NOT NULL AND ""NextAttemptAtUtc"" <= {now}
                   AND (""LockedUntilUtc"" IS NULL OR ""LockedUntilUtc"" <= {now})
-                ORDER BY ""CreatedAtUtc""
-                LIMIT 1
-                FOR UPDATE SKIP LOCKED")
+                ORDER BY ""CreatedAtUtc"" LIMIT 1 FOR UPDATE SKIP LOCKED")
             .FirstOrDefaultAsync(cancellationToken);
 
-        if (pendingEvent == null)
-        {
-            await tx.RollbackAsync(cancellationToken);
-            return;
-        }
+        if (pendingEvent == null) { await tx.RollbackAsync(cancellationToken); return; }
 
-        // Lease duration: 30 seconds
         pendingEvent.AcquireLease(TimeSpan.FromSeconds(30));
         await _dbContext.SaveChangesAsync(cancellationToken);
         await tx.CommitAsync(cancellationToken);
 
-        // Allow loopback and HTTP when running integration tests or development
-        bool isTestOrDev = true;
-
-        if (!SsrfValidator.IsDestinationSafe(pendingEvent.DestinationUrl, allowHttp: isTestOrDev, allowLoopbackForTesting: isTestOrDev))
+        if (!Uri.TryCreate(pendingEvent.DestinationUrl, UriKind.Absolute, out var uri) || !string.Equals(uri.Scheme, "https", StringComparison.OrdinalIgnoreCase))
         {
-            _logger.LogWarning("Webhook destination {Url} blocked by SSRF filter for event {EventId}", pendingEvent.DestinationUrl, pendingEvent.Id);
-            pendingEvent.RecordFailure("Destination blocked by SSRF validation rules.", maxRetries: 1);
+            _logger.LogWarning("Webhook destination {Url} blocked: Only HTTPS is allowed in production.", pendingEvent.DestinationUrl);
+            pendingEvent.RecordFailure("Destination blocked: Only HTTPS is allowed.", maxRetries: 1);
             await _dbContext.SaveChangesAsync(cancellationToken);
             return;
         }
 
-        // Decrypt webhook secret immediately before signing
         string rawSecret;
-        try
-        {
-            rawSecret = _secretProtector.Decrypt(pendingEvent.EncryptedSecretKey);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to decrypt webhook secret for event {EventId}. Aborting delivery.", pendingEvent.Id);
-            pendingEvent.RecordFailure("Decryption failure for webhook secret.", maxRetries: 1);
-            await _dbContext.SaveChangesAsync(cancellationToken);
-            return;
-        }
+        try { rawSecret = _secretProtector.Decrypt(pendingEvent.EncryptedSecretKey); }
+        catch (Exception ex) { _logger.LogError(ex, "Failed to decrypt webhook secret."); pendingEvent.RecordFailure("Decryption failure.", maxRetries: 1); await _dbContext.SaveChangesAsync(cancellationToken); return; }
 
         try
         {
             var timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString();
             var payloadBytes = Encoding.UTF8.GetBytes(pendingEvent.Payload);
-            var signaturePayload = $"{timestamp}.{pendingEvent.Payload}";
-            var signature = ComputeHmacSha256(signaturePayload, rawSecret);
+            var signature = ComputeHmacSha256($"{timestamp}.{pendingEvent.Payload}", rawSecret);
 
-            using var request = new HttpRequestMessage(HttpMethod.Post, pendingEvent.DestinationUrl)
-            {
-                Content = new ByteArrayContent(payloadBytes)
-            };
+            using var request = new HttpRequestMessage(HttpMethod.Post, pendingEvent.DestinationUrl) { Content = new ByteArrayContent(payloadBytes) };
             request.Content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/json");
-
             request.Headers.Add("X-CryptoGateway-Event-Id", pendingEvent.Id.ToString());
             request.Headers.Add("X-CryptoGateway-Timestamp", timestamp);
             request.Headers.Add("X-CryptoGateway-Signature", signature);
 
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            cts.CancelAfter(TimeSpan.FromSeconds(10)); // Strict timeout
-
+            cts.CancelAfter(TimeSpan.FromSeconds(10));
             using var response = await _httpClient.SendAsync(request, cts.Token);
 
-            if (response.IsSuccessStatusCode)
+            if ((int)response.StatusCode >= 300 && (int)response.StatusCode < 400)
             {
-                pendingEvent.RecordSuccess();
-                _logger.LogInformation("Webhook event {EventId} successfully delivered.", pendingEvent.Id);
+                pendingEvent.RecordFailure($"Redirect ({response.StatusCode}) not allowed.");
+                _logger.LogWarning("Webhook redirect rejected for event {EventId}", pendingEvent.Id);
+                await _dbContext.SaveChangesAsync(cancellationToken);
+                return;
             }
-            else
-            {
-                var errorMsg = $"HTTP {(int)response.StatusCode}: {response.ReasonPhrase}";
-                pendingEvent.RecordFailure(errorMsg);
-                _logger.LogWarning("Webhook delivery failed for event {EventId}: {Status}", pendingEvent.Id, response.StatusCode);
-            }
-        }
-        catch (Exception ex)
-        {
-            pendingEvent.RecordFailure(ex.Message);
-            _logger.LogError(ex, "Exception while delivering webhook event {EventId}", pendingEvent.Id);
-        }
 
+            if (response.IsSuccessStatusCode) { pendingEvent.RecordSuccess(); _logger.LogInformation("Webhook {EventId} delivered.", pendingEvent.Id); }
+            else { pendingEvent.RecordFailure($"HTTP {(int)response.StatusCode}"); _logger.LogWarning("Webhook failed for {EventId}: {Status}", pendingEvent.Id, response.StatusCode); }
+            await _dbContext.SaveChangesAsync(cancellationToken);
+        }
+        catch (Exception ex) { pendingEvent.RecordFailure(ex.Message); _logger.LogError(ex, "Exception delivering webhook {EventId}", pendingEvent.Id); }
         await _dbContext.SaveChangesAsync(cancellationToken);
     }
 
     public static string ComputeHmacSha256(string data, string rawSecret)
     {
         using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(rawSecret));
-        var hash = hmac.ComputeHash(Encoding.UTF8.GetBytes(data));
-        return Convert.ToHexString(hash).ToLowerInvariant();
+        return Convert.ToHexString(hmac.ComputeHash(Encoding.UTF8.GetBytes(data))).ToLowerInvariant();
     }
 }
 
@@ -4629,6 +4617,550 @@ namespace Gateway.Persistence.Migrations
 }
 
 ================
+File: src/Infrastructure/Gateway.Persistence/Migrations/20261101200337_Add_Merchant_DefaultWebhookUrl.cs
+================
+using Microsoft.EntityFrameworkCore.Migrations;
+
+#nullable disable
+
+namespace Gateway.Persistence.Migrations
+{
+    /// <inheritdoc />
+    public partial class Add_Merchant_DefaultWebhookUrl : Migration
+    {
+        /// <inheritdoc />
+        protected override void Up(MigrationBuilder migrationBuilder)
+        {
+            migrationBuilder.AddColumn<string>(
+                name: "DefaultWebhookUrl",
+                table: "Merchants",
+                type: "text",
+                nullable: true);
+        }
+
+        /// <inheritdoc />
+        protected override void Down(MigrationBuilder migrationBuilder)
+        {
+            migrationBuilder.DropColumn(
+                name: "DefaultWebhookUrl",
+                table: "Merchants");
+        }
+    }
+}
+
+================
+File: src/Infrastructure/Gateway.Persistence/Migrations/20261101200337_Add_Merchant_DefaultWebhookUrl.Designer.cs
+================
+// <auto-generated />
+using System;
+using Gateway.Persistence;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
+using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
+using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
+
+#nullable disable
+
+namespace Gateway.Persistence.Migrations
+{
+    [DbContext(typeof(GatewayDbContext))]
+    [Migration("20261101200337_Add_Merchant_DefaultWebhookUrl")]
+    partial class Add_Merchant_DefaultWebhookUrl
+    {
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
+        {
+#pragma warning disable 612, 618
+            modelBuilder
+                .HasAnnotation("ProductVersion", "10.0.14")
+                .HasAnnotation("Relational:MaxIdentifierLength", 63);
+
+            NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
+
+            modelBuilder.Entity("Gateway.Domain.Entities.BlockchainScanCursor", b =>
+                {
+                    b.Property<string>("Network")
+                        .HasColumnType("text");
+
+                    b.Property<string>("Address")
+                        .HasColumnType("text");
+
+                    b.Property<string>("LastFingerprint")
+                        .HasColumnType("text");
+
+                    b.Property<decimal>("LastProcessedBlockNumber")
+                        .HasColumnType("numeric(20,0)");
+
+                    b.Property<long>("LastProcessedBlockTimestamp")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTime>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Network", "Address");
+
+                    b.ToTable("BlockchainScanCursors");
+                });
+
+            modelBuilder.Entity("Gateway.Domain.Entities.DerivedAddress", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Address")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<long>("AddressIndex")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<bool>("IsAllocated")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("Network")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<Guid>("WalletId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Network", "Address")
+                        .IsUnique();
+
+                    b.HasIndex("WalletId", "AddressIndex")
+                        .IsUnique();
+
+                    b.ToTable("DerivedAddresses");
+                });
+
+            modelBuilder.Entity("Gateway.Domain.Entities.Invoice", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("CallbackUrl")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("CheckoutToken")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Currency")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("DepositAddress")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<Guid>("DerivedAddressId")
+                        .HasColumnType("uuid");
+
+                    b.Property<decimal>("ExchangeRate")
+                        .HasPrecision(18, 6)
+                        .HasColumnType("numeric(18,6)");
+
+                    b.Property<string>("ExchangeRateSource")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("ExchangeRateTimestampUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<long>("ExpectedAmountUnits")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTime>("ExpiresAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<decimal>("FiatAmount")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<string>("FiatCurrency")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<Guid>("MerchantId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Network")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<long>("PaidAmountUnits")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTime?>("PaidAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("Status")
+                        .HasColumnType("integer");
+
+                    b.Property<long>("UnderpaymentThresholdUnits")
+                        .HasColumnType("bigint");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CheckoutToken")
+                        .IsUnique();
+
+                    b.HasIndex("Status", "ExpiresAtUtc");
+
+                    b.ToTable("Invoices");
+                });
+
+            modelBuilder.Entity("Gateway.Domain.Entities.Merchant", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ApiKeyHash")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("DefaultWebhookUrl")
+                        .HasColumnType("text");
+
+                    b.Property<string>("EncryptedApiKeySecret")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("EncryptedWebhookSecret")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("SettlementAddress")
+                        .HasColumnType("text");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ApiKeyHash")
+                        .IsUnique();
+
+                    b.ToTable("Merchants");
+                });
+
+            modelBuilder.Entity("Gateway.Domain.Entities.MerchantIdempotencyKey", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("ExpiresAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Key")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<Guid>("MerchantId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("RequestHash")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("ResponsePayload")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<int>("ResponseStatusCode")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ExpiresAtUtc");
+
+                    b.HasIndex("MerchantId", "Key")
+                        .IsUnique();
+
+                    b.ToTable("MerchantIdempotencyKeys");
+                });
+
+            modelBuilder.Entity("Gateway.Domain.Entities.MerchantNonce", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("ExpiresAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("MerchantId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Nonce")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ExpiresAtUtc");
+
+                    b.HasIndex("MerchantId", "Nonce")
+                        .IsUnique();
+
+                    b.ToTable("MerchantNonces");
+                });
+
+            modelBuilder.Entity("Gateway.Domain.Entities.OutboxEvent", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("AggregateId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("AttemptCount")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("DestinationUrl")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("EncryptedSecretKey")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("EventType")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<bool>("IsProcessed")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("LastError")
+                        .HasColumnType("text");
+
+                    b.Property<DateTime?>("LockedUntilUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("NextAttemptAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Payload")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("IsProcessed", "NextAttemptAtUtc");
+
+                    b.ToTable("OutboxEvents");
+                });
+
+            modelBuilder.Entity("Gateway.Domain.Entities.PaymentTransfer", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<long>("AmountUnits")
+                        .HasColumnType("bigint");
+
+                    b.Property<decimal>("BlockNumber")
+                        .HasColumnType("numeric(20,0)");
+
+                    b.Property<decimal>("Confirmations")
+                        .HasColumnType("numeric(20,0)");
+
+                    b.Property<DateTime?>("ConfirmedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("FromAddress")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<Guid>("InvoiceId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Network")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("ObservedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("Status")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("ToAddress")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("TokenContractAddress")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("TransactionHash")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<int>("TransferIndex")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("InvoiceId");
+
+                    b.HasIndex("Network", "TransactionHash", "TransferIndex")
+                        .IsUnique();
+
+                    b.ToTable("PaymentTransfers");
+                });
+
+            modelBuilder.Entity("Gateway.Domain.Entities.SweepTask", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<long>("AmountUnits")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTime?>("CompletedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("DerivedAddressId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("DestinationAddress")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("ErrorMessage")
+                        .HasColumnType("text");
+
+                    b.Property<string>("FundingTxHash")
+                        .HasColumnType("text");
+
+                    b.Property<Guid>("MerchantId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("SourceAddress")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<int>("Status")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("SweepTxHash")
+                        .HasColumnType("text");
+
+                    b.Property<string>("TokenContractAddress")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("DerivedAddressId");
+
+                    b.HasIndex("MerchantId", "Status");
+
+                    b.ToTable("SweepTasks");
+                });
+
+            modelBuilder.Entity("Gateway.Domain.Entities.Wallet", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("AccountXPub")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<long>("LastDerivationIndex")
+                        .HasColumnType("bigint");
+
+                    b.Property<Guid>("MerchantId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Network")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("MerchantId", "Network")
+                        .IsUnique();
+
+                    b.ToTable("Wallets");
+                });
+
+            modelBuilder.Entity("Gateway.Domain.Entities.DerivedAddress", b =>
+                {
+                    b.HasOne("Gateway.Domain.Entities.Wallet", null)
+                        .WithMany("DerivedAddresses")
+                        .HasForeignKey("WalletId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Gateway.Domain.Entities.PaymentTransfer", b =>
+                {
+                    b.HasOne("Gateway.Domain.Entities.Invoice", null)
+                        .WithMany("Transfers")
+                        .HasForeignKey("InvoiceId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Gateway.Domain.Entities.Invoice", b =>
+                {
+                    b.Navigation("Transfers");
+                });
+
+            modelBuilder.Entity("Gateway.Domain.Entities.Wallet", b =>
+                {
+                    b.Navigation("DerivedAddresses");
+                });
+#pragma warning restore 612, 618
+        }
+    }
+}
+
+================
 File: src/Infrastructure/Gateway.Persistence/Migrations/GatewayDbContextModelSnapshot.cs
 ================
 // <auto-generated />
@@ -4811,6 +5343,9 @@ namespace Gateway.Persistence.Migrations
 
                     b.Property<DateTime>("CreatedAtUtc")
                         .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("DefaultWebhookUrl")
+                        .HasColumnType("text");
 
                     b.Property<string>("EncryptedApiKeySecret")
                         .IsRequired()
@@ -5361,6 +5896,7 @@ using Gateway.Application.DTOs;
 using Gateway.Blockchain.Tron;
 using Gateway.Domain.Entities;
 using Gateway.Domain.Enums;
+using Gateway.Infrastructure.Security;
 using Gateway.Persistence;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -5382,6 +5918,11 @@ public class InvoicesController : ControllerBase
     [RequireMerchantSignature]
     public async Task<IActionResult> CreateInvoice([FromBody] CreateInvoiceRequest request, CancellationToken ct)
     {
+        if (!SsrfValidator.IsDestinationSafe(request.CallbackUrl, allowHttp: false))
+        {
+            return BadRequest(new { error = "Invalid or prohibited callback URL destination." });
+        }
+        
         var merchantId = (Guid)HttpContext.Items["MerchantId"]!;
 
         var fiatCurrency = request.FiatCurrency.Trim().ToUpperInvariant();
@@ -5657,11 +6198,15 @@ public class MerchantsController : ControllerBase
             accountXPub: request.TronAccountXPub.Trim(),
             network: "TRON"
         );
+        
+        merchant.SetDefaultWebhookUrl(request.WebhookUrl);
 
         _dbContext.Merchants.Add(merchant);
         _dbContext.Wallets.Add(wallet);
 
         await _dbContext.SaveChangesAsync(ct);
+        
+        
 
         return CreatedAtAction(nameof(GetProfile), new { }, new RegisterMerchantResponse
         {
@@ -5957,6 +6502,7 @@ using System.Threading.Tasks;
 using Gateway.Api.Authentication;
 using Gateway.Application.DTOs;
 using Gateway.Domain.Entities;
+using Gateway.Infrastructure.Security;
 using Gateway.Persistence;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -6048,9 +6594,15 @@ public class WebhooksController : ControllerBase
         if (merchant == null)
             return NotFound(new { error = "Merchant not found." });
 
-        var destination = string.IsNullOrWhiteSpace(request.DestinationUrl)
-            ? (await _dbContext.Invoices.Where(i => i.MerchantId == merchantId).OrderByDescending(i => i.CreatedAtUtc).Select(i => i.CallbackUrl).FirstOrDefaultAsync(ct) ?? "https://example.com/webhook")
-            : request.DestinationUrl.Trim();
+        var destination = !string.IsNullOrWhiteSpace(request.DestinationUrl)
+            ? request.DestinationUrl.Trim()
+            : merchant.DefaultWebhookUrl;
+
+        // تغییر allowHttpForDev به allowHttp
+        if (string.IsNullOrWhiteSpace(destination) || !SsrfValidator.IsDestinationSafe(destination, allowHttp: false))
+        {
+            return BadRequest(new { error = "A valid HTTPS destination URL is required." });
+        }
 
         var payload = System.Text.Json.JsonSerializer.Serialize(new
         {
@@ -6453,6 +7005,8 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using System.Net;
+using System.Net.Sockets;
 
 var host = Host.CreateDefaultBuilder(args)
     .ConfigureServices((hostContext, services) =>
@@ -6460,12 +7014,46 @@ var host = Host.CreateDefaultBuilder(args)
         var connectionString = hostContext.Configuration.GetConnectionString("DefaultConnection")
                                ?? throw new InvalidOperationException("Fatal: 'DefaultConnection' connection string is required for Gateway.Worker.");
 
-        services.AddDbContext<GatewayDbContext>(options =>
-            options.UseNpgsql(connectionString));
-
+        services.AddDbContext<GatewayDbContext>(options => options.UseNpgsql(connectionString));
         services.AddSingleton<ISecretProtector, AesGcmSecretProtector>();
         services.AddHttpClient<ITronScannerService, TronScannerService>();
-        services.AddHttpClient<IWebhookDispatcher, WebhookDispatcher>();
+        
+        services.AddHttpClient<IWebhookDispatcher, WebhookDispatcher>()
+            .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
+            {
+                AllowAutoRedirect = false,
+                ConnectTimeout = TimeSpan.FromSeconds(5),
+                ConnectCallback = async (context, cancellationToken) =>
+                {
+                    var host = context.DnsEndPoint.Host;
+                    IPAddress[] ips;
+                    try { ips = await Dns.GetHostAddressesAsync(host, cancellationToken); } 
+                    catch { throw new SocketException((int)SocketError.HostNotFound); }
+
+                    if (ips == null || ips.Length == 0) throw new SocketException((int)SocketError.HostNotFound);
+
+                    IPAddress? targetIp = null;
+                    foreach (var ip in ips)
+                    {
+                        var checkIp = ip.IsIPv4MappedToIPv6 ? ip.MapToIPv4() : ip;
+                        if (!SsrfValidator.IsProhibitedIp(checkIp)) { targetIp = checkIp; break; }
+                    }
+
+                    if (targetIp == null) throw new SocketException((int)SocketError.AccessDenied);
+
+                    var socket = new Socket(targetIp.AddressFamily, SocketType.Stream, ProtocolType.Tcp);
+                    try 
+                    { 
+                        await socket.ConnectAsync(targetIp, context.DnsEndPoint.Port, cancellationToken); 
+                        return new NetworkStream(socket, ownsSocket: true); 
+                    } 
+                    catch 
+                    { 
+                        socket.Dispose(); 
+                        throw; 
+                    }
+                }
+            });
 
         services.AddHostedService<Worker>();
     })
@@ -7080,7 +7668,6 @@ public class TronAddressDerivationTests
 File: tests/Gateway.Blockchain.Tron.Tests/TronKnownVectorsAndHardeningTests.cs
 ================
 using System;
-using System.Security.Cryptography;
 using FluentAssertions;
 using Gateway.Blockchain.Tron;
 using NBitcoin;
@@ -7090,37 +7677,214 @@ namespace Gateway.Blockchain.Tron.Tests;
 
 public class TronKnownVectorsAndHardeningTests
 {
+    // Independently verified using standard BIP39 (empty passphrase) + BIP44 m/44'/195'/0'/0/{index} + Keccak256 + Base58Check
+    private const string ExpectedAddress0 = "TFYjgZoNQ1cm1VZCtcP9Ygkk3kAuY49ALA";
+    private const string ExpectedAddress1 = "TSkxBDeh4qdXxuYfDfVRtB7Gw71YDQvFt4";
+
     [Fact]
     public void KnownVector_ShouldDeriveExactTronAddress()
     {
-        // Vector derived from BIP-44 account xpub
-        // Path: m/44'/195'/0'
         var mnemonic = new Mnemonic("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about");
-        var accountXPub = mnemonic.DeriveExtKey().Derive(new KeyPath("m/44'/195'/0'")).Neuter().ToString(Network.Main);
+        var xpub = mnemonic.DeriveExtKey().Derive(new KeyPath("m/44'/195'/0'")).Neuter().ToString(Network.Main);
+        var service = new TronAddressDerivationService(xpub);
 
-        var service = new TronAddressDerivationService(accountXPub);
-
-        // Derive index 0
         var address0 = service.DeriveAddress(0);
-
+        address0.Should().NotBeNullOrWhiteSpace();
         address0.Should().StartWith("T");
         address0.Length.Should().Be(34);
+        address0.Should().Be(ExpectedAddress0);
 
-        // Derive index 1
         var address1 = service.DeriveAddress(1);
+        address1.Should().NotBeNullOrWhiteSpace();
         address1.Should().StartWith("T");
         address1.Length.Should().Be(34);
-        address1.Should().NotBe(address0);
+        address1.Should().Be(ExpectedAddress1);
     }
 
     [Theory]
     [InlineData("")]
     [InlineData("   ")]
     [InlineData("invalid-xpub")]
+    [InlineData("xpub661MyMwAqRbcFtXgS5sYJABqqG9YLmC4Q1Rdap9gSE8NqtwybGhePY2gZ29ESFEhCu7zmCHJp45654Px5T6h2meZHe9LgigUMNn5GQ83ahD_bad")]
     public void Derivation_InvalidXPub_ShouldFail(string invalidXPub)
     {
         var act = () => new TronAddressDerivationService(invalidXPub);
         act.Should().Throw<Exception>();
+    }
+}
+
+================
+File: tests/Gateway.Blockchain.Tron.Tests/TronScannerVerificationTests.cs
+================
+using System;
+using System.Net;
+using System.Net.Http;
+using System.Text.Json;
+using System.Threading;
+using System.Threading.Tasks;
+using FluentAssertions;
+using Gateway.Blockchain.Tron;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging.Abstractions;
+using Xunit;
+
+namespace Gateway.Blockchain.Tron.Tests;
+
+public class TronScannerVerificationTests
+{
+    private const string UsdtContract = "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t";
+    private const string DepositAddress = "TJvWjs5S78a7W3Yb5vDqS3gJzX5hD2K8Ym";
+    private const string TxHash = "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef";
+
+    // یک HttpMessageHandler ساده برای شبیه‌سازی پاسخ‌های HTTP بدون نیاز به کتابخانه خارجی
+    private class MockHttpMessageHandler : HttpMessageHandler
+    {
+        private readonly HttpResponseMessage _response;
+        public MockHttpMessageHandler(HttpResponseMessage response) => _response = response;
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+            => Task.FromResult(_response);
+    }
+
+    private TronScannerService CreateService(HttpResponseMessage response)
+    {
+        var handler = new MockHttpMessageHandler(response);
+        var httpClient = new HttpClient(handler);
+        var config = new ConfigurationBuilder()
+            .AddInMemoryCollection(new[] { new System.Collections.Generic.KeyValuePair<string, string?>("Tron:UsdtContractAddress", UsdtContract) })
+            .Build();
+        return new TronScannerService(null!, httpClient, config, NullLogger<TronScannerService>.Instance);
+    }
+
+    private string BuildSolidityNodeResponse(bool success, string contractHex, string recipientHex, string amountHex)
+    {
+        var log = new
+        {
+            address = contractHex,
+            topics = new[]
+            {
+                "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
+                "0x0000000000000000000000000000000000000000000000000000000000000000",
+                "0x000000000000000000000000" + recipientHex
+            },
+            data = "0x" + amountHex
+        };
+        return JsonSerializer.Serialize(new { blockNumber = 123456, receipt = new { result = success ? "SUCCESS" : "FAILED" }, log = new[] { log } });
+    }
+
+    [Fact]
+    public async Task VerifySolidifiedTransaction_CorrectEvent_ShouldSucceed()
+    {
+        var expectedAmount = 10_000_000L;
+        var amountHex = expectedAmount.ToString("x").PadLeft(64, '0');
+        var contractHex = TronAddressToHexTest(UsdtContract);
+        var recipientHex = TronAddressToHexTest(DepositAddress);
+        var responseBody = BuildSolidityNodeResponse(true, contractHex, recipientHex, amountHex);
+
+        var service = CreateService(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(responseBody) });
+        var result = await service.VerifySolidifiedTransactionAsync(TxHash, DepositAddress, expectedAmount, 0, CancellationToken.None);
+
+        result.IsSolidified.Should().BeTrue();
+        result.IsSuccess.Should().BeTrue();
+        result.BlockNumber.Should().Be(123456);
+    }
+
+    [Fact]
+    public async Task VerifySolidifiedTransaction_WrongRecipient_ShouldFail()
+    {
+        var expectedAmount = 10_000_000L;
+        var amountHex = expectedAmount.ToString("x").PadLeft(64, '0');
+        var contractHex = TronAddressToHexTest(UsdtContract);
+        var wrongRecipient = "0000000000000000000000000000000000000000";
+        var responseBody = BuildSolidityNodeResponse(true, contractHex, wrongRecipient, amountHex);
+
+        var service = CreateService(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(responseBody) });
+        var result = await service.VerifySolidifiedTransactionAsync(TxHash, DepositAddress, expectedAmount, 0, CancellationToken.None);
+
+        result.IsSuccess.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task VerifySolidifiedTransaction_WrongContract_ShouldFail()
+    {
+        var expectedAmount = 10_000_000L;
+        var amountHex = expectedAmount.ToString("x").PadLeft(64, '0');
+        var wrongContract = "0000000000000000000000000000000000000000";
+        var recipientHex = TronAddressToHexTest(DepositAddress);
+        var responseBody = BuildSolidityNodeResponse(true, wrongContract, recipientHex, amountHex);
+
+        var service = CreateService(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(responseBody) });
+        var result = await service.VerifySolidifiedTransactionAsync(TxHash, DepositAddress, expectedAmount, 0, CancellationToken.None);
+
+        result.IsSuccess.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task VerifySolidifiedTransaction_FailedReceipt_ShouldFail()
+    {
+        var expectedAmount = 10_000_000L;
+        var amountHex = expectedAmount.ToString("x").PadLeft(64, '0');
+        var contractHex = TronAddressToHexTest(UsdtContract);
+        var recipientHex = TronAddressToHexTest(DepositAddress);
+        var responseBody = BuildSolidityNodeResponse(false, contractHex, recipientHex, amountHex);
+
+        var service = CreateService(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(responseBody) });
+        var result = await service.VerifySolidifiedTransactionAsync(TxHash, DepositAddress, expectedAmount, 0, CancellationToken.None);
+
+        result.IsSuccess.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task VerifySolidifiedTransaction_AmbiguousMultipleMatches_ShouldFail()
+    {
+        var expectedAmount = 10_000_000L;
+        var amountHex = expectedAmount.ToString("x").PadLeft(64, '0');
+        var contractHex = TronAddressToHexTest(UsdtContract);
+        var recipientHex = TronAddressToHexTest(DepositAddress);
+
+        var log = new
+        {
+            address = contractHex,
+            topics = new[]
+            {
+                "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
+                "0x0000000000000000000000000000000000000000000000000000000000000000",
+                "0x000000000000000000000000" + recipientHex
+            },
+            data = "0x" + amountHex
+        };
+        var responseBody = JsonSerializer.Serialize(new { blockNumber = 123456, receipt = new { result = "SUCCESS" }, log = new[] { log, log } });
+
+        var service = CreateService(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(responseBody) });
+        var result = await service.VerifySolidifiedTransactionAsync(TxHash, DepositAddress, expectedAmount, 0, CancellationToken.None);
+
+        result.IsSuccess.Should().BeFalse();
+    }
+
+    private static string TronAddressToHexTest(string base58Address)
+    {
+        var bytes = Base58CheckDecodeTest(base58Address);
+        return Convert.ToHexString(bytes.AsSpan(1)).ToLowerInvariant();
+    }
+
+    private static byte[] Base58CheckDecodeTest(string base58)
+    {
+        const string alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+        var intData = System.Numerics.BigInteger.Zero;
+        for (var i = 0; i < base58.Length; i++)
+        {
+            var index = alphabet.IndexOf(base58[i]);
+            if (index < 0) throw new FormatException();
+            intData = intData * 58 + index;
+        }
+        var bytes = intData.ToByteArray(isUnsigned: true, isBigEndian: true);
+        var leadingZeros = 0;
+        for (var i = 0; i < base58.Length && base58[i] == '1'; i++) leadingZeros++;
+        var result = new byte[leadingZeros + bytes.Length];
+        Buffer.BlockCopy(bytes, 0, result, leadingZeros, bytes.Length);
+        var payload = new byte[result.Length - 4];
+        Buffer.BlockCopy(result, 0, payload, 0, payload.Length);
+        return payload;
     }
 }
 
@@ -7245,9 +8009,10 @@ File: tests/Gateway.IntegrationTests/Gateway.IntegrationTests.csproj
 File: tests/Gateway.IntegrationTests/PostgreSqlIntegrationTests.cs
 ================
 using System;
+using System.Collections.Generic;
 using System.Net;
 using System.Net.Http;
-using System.Text.Json;
+using System.Threading;
 using System.Threading.Tasks;
 using FluentAssertions;
 using Gateway.Domain.Entities;
@@ -7268,36 +8033,23 @@ namespace Gateway.IntegrationTests;
 
 public class PostgreSqlIntegrationTests : IAsyncLifetime
 {
-    private readonly PostgreSqlContainer _dbContainer = new PostgreSqlBuilder()
-        .WithImage("postgres:16-alpine")
-        .WithDatabase("test_gateway_db")
-        .WithUsername("postgres")
-        .WithPassword("postgres_test_password")
-        .Build();
+    private readonly PostgreSqlContainer _dbContainer = new PostgreSqlBuilder("postgres:16-alpine")
+        .WithDatabase("test_gateway_db").WithUsername("postgres").WithPassword("postgres_test_password").Build();
 
     private WireMockServer _wireMockServer = null!;
     private GatewayDbContext _dbContext = null!;
     private AesGcmSecretProtector _secretProtector = null!;
+    private IConfiguration _configuration = null!;
 
     public async Task InitializeAsync()
     {
         await _dbContainer.StartAsync();
         _wireMockServer = WireMockServer.Start();
-
-        var config = new ConfigurationBuilder()
-            .AddInMemoryCollection(new[]
-            {
-                new KeyValuePair<string, string?>("Security:MasterEncryptionKey", "0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF")
-            })
+        _configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new[] { new KeyValuePair<string, string?>("Security:MasterEncryptionKey", "0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF") })
             .Build();
-
-        _secretProtector = new AesGcmSecretProtector(config);
-
-        var options = new DbContextOptionsBuilder<GatewayDbContext>()
-            .UseNpgsql(_dbContainer.GetConnectionString())
-            .ConfigureWarnings(w => w.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.RelationalEventId.PendingModelChangesWarning))
-            .Options;
-
+        _secretProtector = new AesGcmSecretProtector(_configuration);
+        var options = new DbContextOptionsBuilder<GatewayDbContext>().UseNpgsql(_dbContainer.GetConnectionString()).Options;
         _dbContext = new GatewayDbContext(options);
         await _dbContext.Database.MigrateAsync();
     }
@@ -7315,66 +8067,126 @@ public class PostgreSqlIntegrationTests : IAsyncLifetime
     {
         var rawWebhookSecret = "whsec_test_secret_1234567890";
         var encryptedSecret = _secretProtector.Encrypt(rawWebhookSecret);
-
-        _wireMockServer
-            .Given(Request.Create().WithPath("/webhook-test").UsingPost())
-            .RespondWith(Response.Create()
-                .WithStatusCode(HttpStatusCode.OK)
-                .WithBody("{\"status\":\"ok\"}"));
-
-        var destinationUrl = $"{_wireMockServer.Url}/webhook-test";
-
-        var outbox = new OutboxEvent(
-            Guid.NewGuid(),
-            "invoice.paid",
-            "{\"invoiceId\":\"123\",\"status\":\"Paid\"}",
-            destinationUrl,
-            encryptedSecret
-        );
-
+        _wireMockServer.Given(Request.Create().WithPath("/webhook-test").UsingPost())
+            .RespondWith(Response.Create().WithStatusCode(HttpStatusCode.OK).WithBody("{\"status\":\"ok\"}"));
+        
+        var destinationUrl = $"http://127.0.0.1:{_wireMockServer.Port}/webhook-test";
+        var outbox = new OutboxEvent(Guid.NewGuid(), "invoice.paid", "{\"invoiceId\":\"123\",\"status\":\"Paid\"}", destinationUrl, encryptedSecret);
+        
         _dbContext.OutboxEvents.Add(outbox);
         await _dbContext.SaveChangesAsync();
-
-        using var httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
+        await _dbContext.Database.ExecuteSqlInterpolatedAsync($"UPDATE \"OutboxEvents\" SET \"NextAttemptAtUtc\" = {DateTime.UtcNow.AddMinutes(-5)} WHERE \"Id\" = {outbox.Id}");
+        
+        using var httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
         var dispatcher = new WebhookDispatcher(_dbContext, httpClient, _secretProtector, NullLogger<WebhookDispatcher>.Instance);
-
         await dispatcher.DispatchPendingWebhooksAsync(CancellationToken.None);
-
-        var refreshed = await _dbContext.OutboxEvents
-            .AsNoTracking()
-            .FirstOrDefaultAsync(o => o.Id == outbox.Id);
-
+        
+        var refreshed = await _dbContext.OutboxEvents.AsNoTracking().FirstOrDefaultAsync(o => o.Id == outbox.Id);
         refreshed.Should().NotBeNull();
-        refreshed!.LastError.Should().BeNull(because: $"Dispatch should not record an error, but encountered: {refreshed.LastError}");
+        refreshed!.LastError.Should().BeNull();
         refreshed.IsProcessed.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task OutboxDispatcher_ConcurrentWorkers_ShouldNotDuplicateDeliveries()
+    {
+        var rawWebhookSecret = "whsec_test_secret_1234567890";
+        var encryptedSecret = _secretProtector.Encrypt(rawWebhookSecret);
+        _wireMockServer.Reset();
+        _wireMockServer.Given(Request.Create().WithPath("/webhook-concurrent").UsingPost())
+            .RespondWith(Response.Create().WithStatusCode(HttpStatusCode.OK).WithBody("{\"status\":\"ok\"}"));
+        
+        var destinationUrl = $"http://127.0.0.1:{_wireMockServer.Port}/webhook-concurrent";
+        var outbox = new OutboxEvent(Guid.NewGuid(), "invoice.paid", "{\"invoiceId\":\"456\",\"status\":\"Paid\"}", destinationUrl, encryptedSecret);
+        
+        _dbContext.OutboxEvents.Add(outbox);
+        await _dbContext.SaveChangesAsync();
+        await _dbContext.Database.ExecuteSqlInterpolatedAsync($"UPDATE \"OutboxEvents\" SET \"NextAttemptAtUtc\" = {DateTime.UtcNow.AddMinutes(-5)} WHERE \"Id\" = {outbox.Id}");
+        
+        using var client1 = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
+        using var client2 = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
+        var options = new DbContextOptionsBuilder<GatewayDbContext>().UseNpgsql(_dbContainer.GetConnectionString()).Options;
+        await using var db1 = new GatewayDbContext(options);
+        await using var db2 = new GatewayDbContext(options);
+        
+        var dispatcher1 = new WebhookDispatcher(db1, client1, _secretProtector, NullLogger<WebhookDispatcher>.Instance);
+        var dispatcher2 = new WebhookDispatcher(db2, client2, _secretProtector, NullLogger<WebhookDispatcher>.Instance);
+        
+        await Task.WhenAll(
+            dispatcher1.DispatchPendingWebhooksAsync(CancellationToken.None),
+            dispatcher2.DispatchPendingWebhooksAsync(CancellationToken.None)
+        );
+        
+        await using var verifyDb = new GatewayDbContext(options);
+        var refreshed = await verifyDb.OutboxEvents.AsNoTracking().FirstOrDefaultAsync(o => o.Id == outbox.Id);
+        refreshed.Should().NotBeNull();
+        refreshed!.IsProcessed.Should().BeTrue();
+        refreshed.AttemptCount.Should().Be(1);
+        
+        var receivedRequests = _wireMockServer.LogEntries;
+        receivedRequests.Should().HaveCount(1);
+        var request = receivedRequests.First().RequestMessage;
+        
+        var receivedBodyBytes = request.BodyData?.BodyAsBytes ?? Array.Empty<byte>();
+        var expectedBodyBytes = System.Text.Encoding.UTF8.GetBytes(outbox.Payload);
+        receivedBodyBytes.Should().BeEquivalentTo(expectedBodyBytes);
+        
+        var timestamp = request.Headers["X-CryptoGateway-Timestamp"].First();
+        var signature = request.Headers["X-CryptoGateway-Signature"].First();
+        var eventId = request.Headers["X-CryptoGateway-Event-Id"].First();
+        
+        var payloadToSign = $"{timestamp}.{System.Text.Encoding.UTF8.GetString(receivedBodyBytes)}";
+        var expectedSig = WebhookDispatcher.ComputeHmacSha256(payloadToSign, rawWebhookSecret);
+        
+        signature.Should().Be(expectedSig);
+        eventId.Should().Be(outbox.Id.ToString());
     }
 
     [Fact]
     public async Task CheckoutExpiration_Persistence_ShouldUpdateDatabase()
     {
-        var invoice = new Invoice(
-            Guid.NewGuid(),
-            Guid.NewGuid(),
-            "TDepositAddress123",
-            10.0m,
-            "USD",
-            1.0m,
-            "DirectPeg",
-            DateTime.UtcNow,
-            10_000_000L,
-            50_000L,
-            "https://test.com/cb",
-            "token-xyz-123",
-            TimeSpan.FromSeconds(-10) // Already expired
-        );
-
+        var invoice = new Invoice(Guid.NewGuid(), Guid.NewGuid(), "TDepositAddress123", 10.0m, "USD", 1.0m, "DirectPeg", DateTime.UtcNow, 10_000_000L, 50_000L, "https://test.com/cb", "token-xyz-123", TimeSpan.FromSeconds(-10));
         _dbContext.Invoices.Add(invoice);
         await _dbContext.SaveChangesAsync();
-
         invoice.EvaluateStatus();
         await _dbContext.SaveChangesAsync();
-
         var fromDb = await _dbContext.Invoices.AsNoTracking().FirstOrDefaultAsync(i => i.Id == invoice.Id);
         fromDb!.Status.Should().Be(InvoiceStatus.Expired);
+    }
+
+    [Fact]
+    public async Task OutboxDispatcher_RedirectResponse_ShouldNotFollowAndReject()
+    {
+        var rawWebhookSecret = "whsec_test_secret_redirect";
+        var encryptedSecret = _secretProtector.Encrypt(rawWebhookSecret);
+        _wireMockServer.Reset();
+        
+        _wireMockServer.Given(Request.Create().WithPath("/webhook-redirect").UsingPost())
+            .RespondWith(Response.Create().WithStatusCode(HttpStatusCode.Redirect).WithHeader("Location", $"http://127.0.0.1:{_wireMockServer.Port}/webhook-final"));
+        _wireMockServer.Given(Request.Create().WithPath("/webhook-final").UsingPost())
+            .RespondWith(Response.Create().WithStatusCode(HttpStatusCode.OK));
+        
+        var destinationUrl = $"http://127.0.0.1:{_wireMockServer.Port}/webhook-redirect";
+        var outbox = new OutboxEvent(Guid.NewGuid(), "invoice.paid", "{\"redirect\":true}", destinationUrl, encryptedSecret);
+        
+        _dbContext.OutboxEvents.Add(outbox);
+        await _dbContext.SaveChangesAsync();
+        await _dbContext.Database.ExecuteSqlInterpolatedAsync($"UPDATE \"OutboxEvents\" SET \"NextAttemptAtUtc\" = {DateTime.UtcNow.AddMinutes(-5)} WHERE \"Id\" = {outbox.Id}");
+        
+        using var httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
+        var options = new DbContextOptionsBuilder<GatewayDbContext>().UseNpgsql(_dbContainer.GetConnectionString()).Options;
+        await using var db = new GatewayDbContext(options);
+        var dispatcher = new WebhookDispatcher(db, httpClient, _secretProtector, NullLogger<WebhookDispatcher>.Instance);
+        
+        await dispatcher.DispatchPendingWebhooksAsync(CancellationToken.None);
+        
+        var refreshed = await db.OutboxEvents.AsNoTracking().FirstOrDefaultAsync(o => o.Id == outbox.Id);
+        refreshed.Should().NotBeNull();
+        refreshed!.IsProcessed.Should().BeFalse();
+        refreshed.LastError.Should().Contain("redirect");
+        
+        var receivedRequests = _wireMockServer.LogEntries;
+        receivedRequests.Should().HaveCount(1);
+        receivedRequests.First().RequestMessage.Path.Should().Be("/webhook-redirect");
     }
 }
