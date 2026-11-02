@@ -22,4 +22,26 @@ public class SsrfProtectionTests
 
         result.Should().Be(isInternal);
     }
+    
+    [Theory]
+    [InlineData("::1", true)]                                     // Loopback
+    [InlineData("fe80::1", true)]                                 // Link-local
+    [InlineData("ff02::1", true)]                                 // Multicast
+    [InlineData("fc00::1", true)]                                 // ULA
+    [InlineData("2001:db8::1", true)]                             // Documentation
+    [InlineData("64:ff9b::1", true)]                              // NAT64
+    [InlineData("64:ff9b:1::1", true)]                            // NAT64 well-known
+    [InlineData("100::1", true)]                                  // Discard
+    [InlineData("2001:20::1", true)]                              // ORCHIDv2
+    [InlineData("2001:2::1", true)]                               // Benchmarking BMWG
+    [InlineData("::ffff:192.168.1.1", true)]                      // IPv4-mapped private
+    [InlineData("::ffff:8.8.8.8", false)]                         // IPv4-mapped public
+    [InlineData("2606:4700:4700::1111", false)]                   // Public IPv6 (Cloudflare)
+    public void IsProhibitedIp_IPv6_ShouldDetectSpecialRanges(string ipString, bool isProhibited)
+    {
+        var ip = IPAddress.Parse(ipString);
+        var result = SsrfValidator.IsProhibitedIp(ip);
+        result.Should().Be(isProhibited);
+    }
+    
 }

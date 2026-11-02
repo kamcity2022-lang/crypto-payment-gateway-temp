@@ -15,7 +15,7 @@ namespace Gateway.Blockchain.Tron.Tests;
 public class TronScannerVerificationTests
 {
     private const string UsdtContract = "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t";
-    private const string DepositAddress = "TJvWjs5S78a7W3Yb5vDqS3gJzX5hD2K8Ym";
+    private const string DepositAddress = "TUEZSdKsoDHQMeZwihtdoBiN46zxhGWYdH";
     private const string TxHash = "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef";
 
     // یک HttpMessageHandler ساده برای شبیه‌سازی پاسخ‌های HTTP بدون نیاز به کتابخانه خارجی
@@ -168,4 +168,44 @@ public class TronScannerVerificationTests
         Buffer.BlockCopy(result, 0, payload, 0, payload.Length);
         return payload;
     }
+    
+        [Fact]
+    public async Task VerifySolidifiedTransaction_EventIndexOutOfBounds_ShouldFail()
+    {
+        var expectedAmount = 10_000_000L;
+        var amountHex = expectedAmount.ToString("x").PadLeft(64, '0');
+        var contractHex = TronAddressToHexTest(UsdtContract);
+        var recipientHex = TronAddressToHexTest(DepositAddress);
+        var responseBody = BuildSolidityNodeResponse(true, contractHex, recipientHex, amountHex); // Only 1 log in array
+
+        var service = CreateService(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(responseBody) });
+        // Requesting event_index 5, but array only has length 1
+        var result = await service.VerifySolidifiedTransactionAsync(TxHash, DepositAddress, expectedAmount, 5, CancellationToken.None);
+        result.IsSuccess.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task VerifySolidifiedTransaction_CorrectLogAtWrongIndex_ShouldFail()
+    {
+        var expectedAmount = 10_000_000L;
+        var amountHex = expectedAmount.ToString("x").PadLeft(64, '0');
+        var contractHex = TronAddressToHexTest(UsdtContract);
+        var recipientHex = TronAddressToHexTest(DepositAddress);
+
+        var correctLog = new {
+            address = contractHex,
+            topics = new[] { "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef", "0x00", "0x000000000000000000000000" + recipientHex },
+            data = "0x" + amountHex
+        };
+        var dummyLog = new { address = "0000", topics = new[] { "0x11", "0x22", "0x33" }, data = "0x00" };
+        
+        // Correct log is at index 1, dummy log is at index 0
+        var responseBody = JsonSerializer.Serialize(new { blockNumber = 123456, receipt = new { result = "SUCCESS" }, log = new[] { dummyLog, correctLog } });
+
+        var service = CreateService(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(responseBody) });
+        // Requesting event_index 0, which points to the dummy log
+        var result = await service.VerifySolidifiedTransactionAsync(TxHash, DepositAddress, expectedAmount, 0, CancellationToken.None);
+        result.IsSuccess.Should().BeFalse();
+    }
+    
 }

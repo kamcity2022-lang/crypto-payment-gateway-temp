@@ -12,6 +12,7 @@ using System.Text;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
+using System.Security.Cryptography;
 
 namespace Gateway.Blockchain.Tron;
 
@@ -34,7 +35,7 @@ public class TronScannerService : ITronScannerService
         _httpClient = httpClient;
         _configuration = configuration;
         _logger = logger;
-        _usdtContractAddress = configuration["Tron:UsdtContractAddress"] 
+        _usdtContractAddress = configuration["Tron:UsdtContractAddress"]
                                ?? throw new InvalidOperationException("Configuration 'Tron:UsdtContractAddress' is required.");
     }
 
@@ -90,7 +91,6 @@ public class TronScannerService : ITronScannerService
 
             using var request = new HttpRequestMessage(HttpMethod.Get, url);
             using var response = await _httpClient.SendAsync(request, ct);
-
             if (!response.IsSuccessStatusCode) return;
 
             var json = await response.Content.ReadAsStringAsync(ct);
@@ -118,7 +118,11 @@ public class TronScannerService : ITronScannerService
                 var blockTimestamp = item.GetProperty("block_timestamp").GetInt64();
 
                 var txDetail = await VerifySolidifiedTransactionAsync(txHash, invoice.DepositAddress, amountUnits, eventIndex, ct);
-                if (!txDetail.IsSolidified || !txDetail.IsSuccess) continue;
+                if (!txDetail.IsSolidified || !txDetail.IsSuccess)
+                {
+                    _logger.LogWarning("Tx {TxHash} rejected: Solidified={S}, Success={OK}", txHash, txDetail.IsSolidified, txDetail.IsSuccess);
+                    continue;
+                }
 
                 var existingTransfer = await _dbContext.PaymentTransfers
                     .FirstOrDefaultAsync(t => t.Network == "TRON" && t.TransactionHash == txHash && t.TransferIndex == eventIndex, ct);
@@ -128,7 +132,7 @@ public class TronScannerService : ITronScannerService
                     var fromAddress = item.GetProperty("from").GetString() ?? string.Empty;
                     var transfer = new PaymentTransfer(invoice.Id, "TRON", txHash, eventIndex, _usdtContractAddress, fromAddress, toAddress, amountUnits, txDetail.BlockNumber);
                     _dbContext.PaymentTransfers.Add(transfer);
-                    
+
                     if (invoice.RegisterTransfer(transfer))
                     {
                         transfer.UpdateConfirmations(solidifiedBlockNumber, 1);
@@ -140,10 +144,14 @@ public class TronScannerService : ITronScannerService
                             var merchant = await _dbContext.Merchants.FindAsync(new object[] { invoice.MerchantId }, ct);
                             if (merchant != null)
                             {
-                                var payload = JsonSerializer.Serialize(new {
+                                var payload = JsonSerializer.Serialize(new
+                                {
                                     @event = $"invoice.{currentStatus.ToString().ToLowerInvariant()}",
-                                    invoiceId = invoice.Id, status = currentStatus.ToString(),
-                                    paidUnits = invoice.PaidAmountUnits, expectedUnits = invoice.ExpectedAmountUnits, txHash = txHash
+                                    invoiceId = invoice.Id,
+                                    status = currentStatus.ToString(),
+                                    paidUnits = invoice.PaidAmountUnits,
+                                    expectedUnits = invoice.ExpectedAmountUnits,
+                                    txHash = txHash
                                 });
                                 _dbContext.OutboxEvents.Add(new OutboxEvent(invoice.Id, $"invoice.{currentStatus.ToString().ToLowerInvariant()}", payload, invoice.CallbackUrl, merchant.EncryptedWebhookSecret));
                             }
@@ -186,159 +194,147 @@ public class TronScannerService : ITronScannerService
         return 0;
     }
 
-    public async Task<(bool IsSolidified, bool IsSuccess, ulong BlockNumber)> VerifySolidifiedTransactionAsync(
-    string txHash, string expectedToAddress, long expectedAmountUnits, int expectedEventIndex, CancellationToken ct)
-{
-    try
+        public async Task<(bool IsSolidified, bool IsSuccess, ulong BlockNumber)> VerifySolidifiedTransactionAsync(
+        string txHash, string expectedToAddress, long expectedAmountUnits, int expectedEventIndex, CancellationToken ct)
     {
-        if (string.IsNullOrWhiteSpace(txHash)) return (false, false, 0);
-        if (expectedAmountUnits <= 0) return (false, false, 0);
-        if (expectedEventIndex < 0) return (false, false, 0); // کران پایین معتبر
-
-        var jsonPayload = JsonSerializer.Serialize(new { value = txHash });
-        using var content = new StringContent(jsonPayload, Encoding.UTF8, "application/json");
-        var res = await _httpClient.PostAsync("https://api.trongrid.io/walletsolidity/gettransactioninfobyid", content, ct);
-        if (!res.IsSuccessStatusCode) return (false, false, 0);
-
-        var json = await res.Content.ReadAsStringAsync(ct);
-        using var doc = JsonDocument.Parse(json);
-
-        if (doc.RootElement.ValueKind != JsonValueKind.Object ||
-            !doc.RootElement.TryGetProperty("blockNumber", out var bNum)) return (false, false, 0);
-
-        ulong blockNumber = (ulong)bNum.GetInt64();
-        if (blockNumber == 0) return (false, false, 0); // هنوز جامد نشده
-
-        if (!doc.RootElement.TryGetProperty("receipt", out var receipt) ||
-            !receipt.TryGetProperty("result", out var resultStr) ||
-            !string.Equals(resultStr.GetString(), "SUCCESS", StringComparison.OrdinalIgnoreCase))
-            return (true, false, blockNumber);
-
-        if (!doc.RootElement.TryGetProperty("log", out var logs) || logs.GetArrayLength() == 0)
-            return (true, false, blockNumber);
-
-        // کران بالای event_index نسبت به تعداد واقعی لاگ‌ها
-        if (expectedEventIndex >= logs.GetArrayLength())
-        {
-            _logger.LogWarning("event_index {Idx} out of bounds (logs={Count}) for tx {Tx}. Rejecting.",
-                expectedEventIndex, logs.GetArrayLength(), txHash);
-            return (true, false, blockNumber);
-        }
-
-        string expectedContractHex;
-        string expectedRecipientHex;
         try
         {
-            expectedContractHex = TronAddressToHex(_usdtContractAddress);
-            expectedRecipientHex = TronAddressToHex(expectedToAddress);
-        }
-        catch (Exception)
-        {
-            return (false, false, 0);
-        }
+            if (string.IsNullOrWhiteSpace(txHash)) return (false, false, 0);
+            if (expectedAmountUnits <= 0) return (false, false, 0);
+            if (expectedEventIndex < 0) return (false, false, 0);
 
-        // شمارش رویدادهای منطبق برای تشخیص ابهام
-        int matchCount = 0;
+            var jsonPayload = JsonSerializer.Serialize(new { value = txHash });
+            using var content = new StringContent(jsonPayload, Encoding.UTF8, "application/json");
+            var res = await _httpClient.PostAsync("https://api.trongrid.io/walletsolidity/gettransactioninfobyid", content, ct);
+            if (!res.IsSuccessStatusCode) return (false, false, 0);
 
-        foreach (var log in logs.EnumerateArray())
-        {
-            if (!IsMatchingUsdtTransfer(log, expectedContractHex, expectedRecipientHex, expectedAmountUnits))
-                continue;
+            var json = await res.Content.ReadAsStringAsync(ct);
+            using var doc = JsonDocument.Parse(json);
 
-            matchCount++;
-            if (matchCount > 1)
+            if (doc.RootElement.ValueKind != JsonValueKind.Object || !doc.RootElement.TryGetProperty("blockNumber", out var bNum)) return (false, false, 0);
+            ulong blockNumber = (ulong)bNum.GetInt64();
+            if (blockNumber == 0) return (false, false, 0);
+
+            if (!doc.RootElement.TryGetProperty("receipt", out var receipt) || !receipt.TryGetProperty("result", out var resultStr) || !string.Equals(resultStr.GetString(), "SUCCESS", StringComparison.OrdinalIgnoreCase))
+                return (true, false, blockNumber);
+
+            if (!doc.RootElement.TryGetProperty("log", out var logs) || logs.GetArrayLength() == 0) return (true, false, blockNumber);
+
+            // 1. Strict bounds check
+            if (expectedEventIndex >= logs.GetArrayLength())
             {
-                // بیش از یک رویداد منطبق -> ابهام -> رد امن
-                _logger.LogWarning("Ambiguous TRC20 matches ({Count}) in tx {Tx}. Rejecting.", matchCount, txHash);
+                _logger.LogWarning("event_index {Idx} out of bounds (logs={Count}) for tx {Tx}. Rejecting.",
+                    expectedEventIndex, logs.GetArrayLength(), txHash);
                 return (true, false, blockNumber);
             }
+
+            string expectedContractHex;
+            string expectedRecipientHex;
+            try
+            {
+                expectedContractHex = TronAddressToHex(_usdtContractAddress);
+                expectedRecipientHex = TronAddressToHex(expectedToAddress);
+            }
+            catch (Exception)
+            {
+                return (false, false, 0); // Malformed addresses
+            }
+
+            // 2. The log at the expected index MUST match
+            var targetLog = logs[expectedEventIndex];
+            if (!IsMatchingUsdtTransfer(targetLog, expectedContractHex, expectedRecipientHex, expectedAmountUnits))
+            {
+                _logger.LogWarning("Log at event_index {Idx} for tx {Tx} does not match expected USDT transfer. Rejecting.", expectedEventIndex, txHash);
+                return (true, false, blockNumber);
+            }
+
+            // 3. Ambiguity check: Ensure NO OTHER log in the receipt matches the exact same criteria
+            int matchCount = 0;
+            foreach (var log in logs.EnumerateArray())
+            {
+                if (IsMatchingUsdtTransfer(log, expectedContractHex, expectedRecipientHex, expectedAmountUnits))
+                {
+                    matchCount++;
+                    if (matchCount > 1)
+                    {
+                        _logger.LogWarning("Ambiguous TRC20 matches ({Count}) in tx {Tx}. Rejecting.", matchCount, txHash);
+                        return (true, false, blockNumber);
+                    }
+                }
+            }
+
+            return (true, true, blockNumber);
         }
-
-        if (matchCount != 1) return (true, false, blockNumber);
-        return (true, true, blockNumber);
+        catch (Exception ex) { _logger.LogError(ex, "Error verifying tx {TxHash}", txHash); return (false, false, 0); }
     }
-    catch (Exception ex)
+
+    private bool IsMatchingUsdtTransfer(JsonElement log, string expectedContractHex, string expectedRecipientHex, long expectedAmountUnits)
     {
-        _logger.LogError(ex, "Error verifying tx {TxHash}", txHash);
-        return (false, false, 0);
+        if (!log.TryGetProperty("address", out var cAddr)) return false;
+        var contractRaw = cAddr.GetString();
+        if (string.IsNullOrWhiteSpace(contractRaw)) return false;
+        var contractHex = NormalizeHexAddress(contractRaw);
+        if (contractHex == null || !string.Equals(contractHex, expectedContractHex, StringComparison.OrdinalIgnoreCase)) return false;
+
+        if (!log.TryGetProperty("topics", out var topics) || topics.GetArrayLength() < 3) return false;
+
+        var sigRaw = topics[0].GetString();
+        var sig = NormalizeTopicHex(sigRaw);
+        if (sig == null || !string.Equals(sig, TransferTopicSignature, StringComparison.OrdinalIgnoreCase)) return false;
+
+        var recipientTopicRaw = topics[2].GetString();
+        var recipientTopic = NormalizeTopicHex(recipientTopicRaw);
+        if (recipientTopic == null || recipientTopic.Length != 64) return false;
+        var recipientEvm = recipientTopic.Substring(24);
+        if (!string.Equals(recipientEvm, expectedRecipientHex, StringComparison.OrdinalIgnoreCase)) return false;
+
+        if (!log.TryGetProperty("data", out var dataProp)) return false;
+        var dataHex = StripHexPrefix(dataProp.GetString());
+        if (string.IsNullOrWhiteSpace(dataHex)) return false;
+        if (!IsHex(dataHex)) return false;
+
+        if (!System.Numerics.BigInteger.TryParse(dataHex, System.Globalization.NumberStyles.HexNumber, null, out var parsed))
+            return false;
+
+        if (parsed < 0 || parsed > long.MaxValue) return false;
+        if ((long)parsed != expectedAmountUnits) return false;
+
+        return true;
     }
-}
 
-private bool IsMatchingUsdtTransfer(JsonElement log, string expectedContractHex, string expectedRecipientHex, long expectedAmountUnits)
-{
-    // --- آدرس قرارداد ---
-    if (!log.TryGetProperty("address", out var cAddr)) return false;
-    var contractRaw = cAddr.GetString();
-    if (string.IsNullOrWhiteSpace(contractRaw)) return false;
-    var contractHex = NormalizeHexAddress(contractRaw);
-    if (contractHex == null || !string.Equals(contractHex, expectedContractHex, StringComparison.OrdinalIgnoreCase)) return false;
-
-    // --- topics ---
-    if (!log.TryGetProperty("topics", out var topics) || topics.GetArrayLength() < 3) return false;
-
-    // topics[0]: امضای Transfer — نرمال‌سازی 0x و اعتبارسنجی هگز
-    var sigRaw = topics[0].GetString();
-    var sig = NormalizeTopicHex(sigRaw);
-    if (sig == null || !string.Equals(sig, TransferTopicSignature, StringComparison.OrdinalIgnoreCase)) return false;
-
-    // topics[2]: گیرنده — باید دقیقاً ۶۴ کاراکتر هگز باشد
-    var recipientTopicRaw = topics[2].GetString();
-    var recipientTopic = NormalizeTopicHex(recipientTopicRaw);
-    if (recipientTopic == null || recipientTopic.Length != 64) return false;
-    var recipientEvm = recipientTopic.Substring(24); // ۲۴ کاراکتر اول صفر پد، ۴۰ کاراکتر آخر آدرس
-    if (!string.Equals(recipientEvm, expectedRecipientHex, StringComparison.OrdinalIgnoreCase)) return false;
-
-    // --- data: مبلغ uint256 ---
-    if (!log.TryGetProperty("data", out var dataProp)) return false;
-    var dataHex = StripHexPrefix(dataProp.GetString());
-    if (string.IsNullOrWhiteSpace(dataHex)) return false;
-    if (!IsHex(dataHex)) return false;
-
-    if (!System.Numerics.BigInteger.TryParse(dataHex, System.Globalization.NumberStyles.HexNumber, null, out var parsed))
-        return false;
-
-    // منفی، سرریز، یا خارج از محدوده مبلغ پشتیبانی‌شده -> رد
-    if (parsed < 0 || parsed > long.MaxValue) return false;
-    if ((long)parsed != expectedAmountUnits) return false;
-
-    return true;
-}
-
-private static string? NormalizeTopicHex(string? raw)
-{
-    var s = StripHexPrefix(raw);
-    if (string.IsNullOrEmpty(s) || !IsHex(s)) return null;
-    return s.ToLowerInvariant();
-}
-
-private static string? NormalizeHexAddress(string? raw)
-{
-    var s = StripHexPrefix(raw);
-    if (string.IsNullOrEmpty(s)) return null;
-    // آدرس ۴۱‌دار ترون (۴۲ کاراکتر با 41) -> حذف پیشوند 41
-    if (s.Length == 42 && s.StartsWith("41", StringComparison.OrdinalIgnoreCase))
-        s = s.Substring(2);
-    if (s.Length != 40 || !IsHex(s)) return null;
-    return s.ToLowerInvariant();
-}
-
-private static string? StripHexPrefix(string? s)
-{
-    if (string.IsNullOrWhiteSpace(s)) return null;
-    s = s.Trim();
-    if (s.StartsWith("0x", StringComparison.OrdinalIgnoreCase)) s = s.Substring(2);
-    return s;
-}
-
-private static bool IsHex(string s)
-{
-    foreach (var c in s)
+    private static string? NormalizeTopicHex(string? raw)
     {
-        bool ok = (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
-        if (!ok) return false;
+        var s = StripHexPrefix(raw);
+        if (string.IsNullOrEmpty(s) || !IsHex(s)) return null;
+        return s.ToLowerInvariant();
     }
-    return true;
-}
+
+    private static string? NormalizeHexAddress(string? raw)
+    {
+        var s = StripHexPrefix(raw);
+        if (string.IsNullOrEmpty(s)) return null;
+        if (s.Length == 42 && s.StartsWith("41", StringComparison.OrdinalIgnoreCase)) s = s.Substring(2);
+        if (s.Length != 40 || !IsHex(s)) return null;
+        return s.ToLowerInvariant();
+    }
+
+    private static string? StripHexPrefix(string? s)
+    {
+        if (string.IsNullOrWhiteSpace(s)) return null;
+        s = s.Trim();
+        if (s.StartsWith("0x", StringComparison.OrdinalIgnoreCase)) s = s.Substring(2);
+        return s;
+    }
+
+    private static bool IsHex(string s)
+    {
+        foreach (var c in s)
+        {
+            bool ok = (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+            if (!ok) return false;
+        }
+        return true;
+    }
 
     private static string TronAddressToHex(string base58Address)
     {
@@ -353,7 +349,7 @@ private static bool IsHex(string s)
         for (var i = 0; i < base58.Length; i++)
         {
             var index = alphabet.IndexOf(base58[i]);
-            if (index < 0) throw new FormatException();
+            if (index < 0) throw new FormatException("Invalid Base58 character.");
             intData = intData * 58 + index;
         }
         var bytes = intData.ToByteArray(isUnsigned: true, isBigEndian: true);
@@ -361,8 +357,24 @@ private static bool IsHex(string s)
         for (var i = 0; i < base58.Length && base58[i] == '1'; i++) leadingZeros++;
         var result = new byte[leadingZeros + bytes.Length];
         Buffer.BlockCopy(bytes, 0, result, leadingZeros, bytes.Length);
+
+        if (result.Length < 5) throw new FormatException("Base58Check payload too short.");
+
         var payload = new byte[result.Length - 4];
         Buffer.BlockCopy(result, 0, payload, 0, payload.Length);
+        var checksum = new byte[4];
+        Buffer.BlockCopy(result, payload.Length, checksum, 0, 4);
+
+        using var sha256 = SHA256.Create();
+        var hash1 = sha256.ComputeHash(payload);
+        var hash2 = sha256.ComputeHash(hash1);
+
+        if (hash2[0] != checksum[0] || hash2[1] != checksum[1] || hash2[2] != checksum[2] || hash2[3] != checksum[3])
+            throw new FormatException("Invalid Base58Check checksum.");
+
+        if (payload.Length != 21) throw new FormatException("Invalid TRON address length.");
+        if (payload[0] != 0x41) throw new FormatException("Invalid TRON network prefix.");
+
         return payload;
     }
 }

@@ -9,15 +9,13 @@ namespace Gateway.Blockchain.Tron.Tests;
 public class TronKnownVectorsAndHardeningTests
 {
     // Index 0: Independently verified via LedgerHQ/app-tron official test vectors
-    // for BIP39 "abandon...about" (empty passphrase) + BIP44 m/44'/195'/0'/0/0
     private const string ExpectedAddress0 = "TUEZSdKsoDHQMeZwihtdoBiN46zxhGWYdH";
     
-    // Index 1: Cross-check this value with an independent wallet (e.g., TronLink
-    // importing the same mnemonic, or iancoleman.io/bip39 with Coin=TRON).
-    // The implementation is mathematically proven correct by Index 0 matching the
-    // official LedgerHQ vector, so this value is reliable for regression testing.
+    // TODO: Index 1 value was derived from implementation output. 
+    // It MUST be manually cross-checked with an independent wallet (e.g., TronLink) 
+    // before being considered cryptographically proven.
     private const string ExpectedAddress1 = "TSeJkUh4Qv67VNFwY8LaAxERygNdy6NQZK";
-
+    
     [Fact]
     public void KnownVector_ShouldDeriveExactTronAddress()
     {
