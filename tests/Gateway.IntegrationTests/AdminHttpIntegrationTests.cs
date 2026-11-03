@@ -174,18 +174,15 @@ public class AdminHttpIntegrationTests : IAsyncLifetime
         await dbContext.SaveChangesAsync();
 
         // Use reflection to set some merchants to inactive for testing the IsActive filter
-        var allMerchants = await dbContext.Merchants.ToListAsync();
-        for (int i = 0; i < allMerchants.Count; i++)
+        var merchantsToDeactivate = await dbContext.Merchants.Where(m => m.Name.StartsWith("Merchant ")).ToListAsync();
+        for (int i = 0; i < merchantsToDeactivate.Count; i++)
         {
             if (i % 2 == 0)
             {
-                var prop = typeof(Merchant).GetProperty("IsActive",
-                    System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic |
-                    System.Reflection.BindingFlags.Public);
-                prop?.SetValue(allMerchants[i], false);
+                var prop = typeof(Merchant).GetProperty("IsActive", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public);
+                prop?.SetValue(merchantsToDeactivate[i], false);
             }
         }
-
         await dbContext.SaveChangesAsync();
 
         _superAdminClient = _factory.CreateClientWithAuth("superadmin@test.com", new[] { "SuperAdmin" });
@@ -408,5 +405,28 @@ public class AdminHttpIntegrationTests : IAsyncLifetime
         var merchantId = Guid.NewGuid();
         var response = await _merchantClient.PostAsync($"/api/v1/admin/merchants/{merchantId}/deactivate", null);
         response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+    }
+    
+    [Fact]
+    public async Task MerchantUser_DeactivatedMerchant_ShouldReturnForbidden()
+    {
+        // 1. Verify merchant user can access dashboard while active
+        var responseActive = await _merchantClient.GetAsync("/api/v1/dashboard/profile");
+        responseActive.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        // 2. Deactivate the merchant via SuperAdmin client
+        var merchantIdStr = _merchantClient.DefaultRequestHeaders.GetValues("X-Test-MerchantId").First();
+        var merchantId = Guid.Parse(merchantIdStr);
+        
+        var deactivateResponse = await _superAdminClient.PostAsync($"/api/v1/admin/merchants/{merchantId}/deactivate", null);
+        deactivateResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        // 3. Verify the same merchant user now gets 403 Forbidden
+        var responseInactive = await _merchantClient.GetAsync("/api/v1/dashboard/profile");
+        responseInactive.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+
+        // 4. Verify SuperAdmin can still access admin endpoints
+        var superAdminResponse = await _superAdminClient.GetAsync("/api/v1/admin/overview");
+        superAdminResponse.StatusCode.Should().Be(HttpStatusCode.OK);
     }
 }

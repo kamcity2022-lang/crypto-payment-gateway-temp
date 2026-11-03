@@ -54,7 +54,7 @@ builder.Services.AddAuthorization(options =>
         .AddRequirements(new Gateway.Api.Authorization.MerchantIdRequirement()));
 });
 
-builder.Services.AddSingleton<Microsoft.AspNetCore.Authorization.IAuthorizationHandler,
+builder.Services.AddScoped<Microsoft.AspNetCore.Authorization.IAuthorizationHandler,
     Gateway.Api.Authorization.MerchantIdHandler>();
 
 // 4. Cookie Configuration
