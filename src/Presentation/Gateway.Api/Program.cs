@@ -27,11 +27,12 @@ builder.Services.AddIdentity<ApplicationUser, IdentityRole>(options =>
     options.Password.RequiredLength = 8;
     options.Lockout.DefaultLockoutTimeSpan = TimeSpan.FromMinutes(15);
     options.Lockout.MaxFailedAccessAttempts = 5;
-    // ✅ Require email confirmation for login (email verification flow to be implemented in Task 2)
     options.SignIn.RequireConfirmedEmail = true;
 })
 .AddEntityFrameworkStores<GatewayDbContext>()
 .AddDefaultTokenProviders();
+
+builder.Services.AddScoped<IUserClaimsPrincipalFactory<ApplicationUser>, Gateway.Api.Identity.CustomUserClaimsPrincipalFactory>();
 
 builder.Services.AddAuthorization(options =>
 {
@@ -65,27 +66,34 @@ builder.Services.AddSwaggerGen();
 
 // 5. Health Check
 builder.Services.AddHealthChecks()
-.AddAsyncCheck("Database", async (ct) =>
-{
-    try
+    .AddAsyncCheck("Database", async (ct) =>
     {
-        var optionsBuilder = new DbContextOptionsBuilder<GatewayDbContext>();
-        optionsBuilder.UseNpgsql(connectionString);
-        await using var db = new GatewayDbContext(optionsBuilder.Options);
-        var canConnect = await db.Database.CanConnectAsync(ct);
-        return canConnect
-            ? HealthCheckResult.Healthy("Database connected.")
-            : HealthCheckResult.Unhealthy("Database unreachable.");
-    }
-    catch (Exception ex)
-    {
-        return HealthCheckResult.Unhealthy(ex.Message);
-    }
-});
+        try
+        {
+            var optionsBuilder = new DbContextOptionsBuilder<GatewayDbContext>();
+            optionsBuilder.UseNpgsql(connectionString);
+            await using var db = new GatewayDbContext(optionsBuilder.Options);
+            var canConnect = await db.Database.CanConnectAsync(ct);
+            return canConnect
+                ? HealthCheckResult.Healthy("Database connected.")
+                : HealthCheckResult.Unhealthy("Database unreachable.");
+        }
+        catch (Exception ex)
+        {
+            return HealthCheckResult.Unhealthy(ex.Message);
+        }
+    });
 
 builder.Services.AddHttpClient<ITronSweepService, TronSweepService>();
 
 var app = builder.Build();
+
+// ✅ FIX: Apply EF Core migrations at startup to ensure tables exist before HostedServices run
+using (var scope = app.Services.CreateScope())
+{
+    var dbContext = scope.ServiceProvider.GetRequiredService<GatewayDbContext>();
+    await dbContext.Database.MigrateAsync();
+}
 
 if (app.Environment.IsDevelopment())
 {

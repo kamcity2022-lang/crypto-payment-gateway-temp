@@ -81,7 +81,7 @@ public class AuthController : ControllerBase
                 UserName = request.Email,
                 Email = request.Email,
                 MerchantId = tokenRecord.MerchantId,
-                EmailConfirmed = false
+                EmailConfirmed = true
             };
 
             var createResult = await _userManager.CreateAsync(user, request.Password);
@@ -173,6 +173,13 @@ public class AuthController : ControllerBase
             message = "Invite token generated securely. Provide this to the user out-of-band.",
             inviteToken = plainToken 
         });
+    }
+    
+    [HttpPost("logout")]
+    public async Task<IActionResult> Logout()
+    {
+        await _signInManager.SignOutAsync();
+        return Ok(new { message = "Logged out successfully." });
     }
 
     private static string HashToken(string token)
