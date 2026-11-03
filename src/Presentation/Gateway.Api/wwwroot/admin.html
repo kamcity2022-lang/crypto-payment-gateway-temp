@@ -1,0 +1,499 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Super Admin Dashboard — Crypto Gateway</title>
+    <style>
+        body { background-color: #0b0f17; color: #e6edf3; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; margin: 0; display: flex; flex-direction: column; min-height: 100vh; }
+        .container { max-width: 1200px; margin: 0 auto; padding: 24px; width: 100%; box-sizing: border-box; }
+        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 32px; border-bottom: 1px solid #30363d; padding-bottom: 16px; }
+        .btn { background: #238636; color: white; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-weight: 600; text-decoration: none; display: inline-block; }
+        .btn:hover { background: #2ea043; }
+        .btn-danger { background: #da3633; }
+        .btn-danger:hover { background: #f85149; }
+        .btn-warning { background: #d29922; }
+        .btn-warning:hover { background: #e3b341; }
+        .btn-secondary { background: #30363d; }
+        .btn-secondary:hover { background: #484f58; }
+        .card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 20px; margin-bottom: 20px; }
+        .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 24px; }
+        .stat-box { background: #0d1117; padding: 16px; border-radius: 6px; border: 1px solid #30363d; text-align: center; }
+        .stat-value { font-size: 28px; font-weight: 700; color: #58a6ff; margin: 8px 0; }
+        .stat-label { color: #8b949e; font-size: 13px; }
+        table { width: 100%; border-collapse: collapse; margin-top: 16px; }
+        th, td { text-align: left; padding: 12px; border-bottom: 1px solid #30363d; font-size: 14px; }
+        th { color: #8b949e; font-weight: 600; }
+        .status-active { color: #3fb950; }
+        .status-inactive { color: #f85149; }
+        .hidden { display: none !important; }
+        .login-form { max-width: 400px; margin: 100px auto; }
+        .input { width: 100%; padding: 10px; margin-bottom: 12px; background: #0d1117; border: 1px solid #30363d; color: #e6edf3; border-radius: 6px; box-sizing: border-box; }
+        .error { color: #f85149; font-size: 13px; margin-bottom: 12px; }
+        .success { color: #3fb950; font-size: 13px; margin-bottom: 12px; }
+        .warning { color: #d29922; font-size: 13px; margin-bottom: 12px; padding: 12px; background: #1c1e24; border: 1px solid #d29922; border-radius: 6px; }
+        .filter-bar { display: flex; gap: 12px; margin-bottom: 16px; align-items: center; }
+        .filter-bar input, .filter-bar select { padding: 8px; background: #0d1117; border: 1px solid #30363d; color: #e6edf3; border-radius: 6px; }
+        .pagination { display: flex; gap: 8px; justify-content: center; margin-top: 16px; }
+        .modal { display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; background-color: rgba(0,0,0,0.7); }
+        .modal-content { background: #161b22; margin: 5% auto; padding: 24px; border: 1px solid #30363d; border-radius: 8px; width: 80%; max-width: 600px; }
+        .close { color: #8b949e; float: right; font-size: 28px; font-weight: bold; cursor: pointer; }
+        .close:hover { color: #e6edf3; }
+        .credentials-box { background: #0d1117; padding: 16px; border-radius: 6px; border: 1px solid #30363d; font-family: monospace; font-size: 12px; word-break: break-all; margin: 12px 0; }
+    </style>
+</head>
+<body>
+<div id="loginView" class="container login-form">
+    <h2 style="text-align: center;">Super Admin Login</h2>
+    <div id="loginError" class="error hidden"></div>
+    <input type="email" id="email" class="input" placeholder="Email" required>
+    <input type="password" id="password" class="input" placeholder="Password" required>
+    <button class="btn" style="width: 100%;" onclick="login()">Sign In</button>
+</div>
+
+<div id="adminView" class="container hidden">
+    <div class="header">
+        <div>
+            <h2 style="margin: 0;">Super Admin Dashboard</h2>
+            <span style="color: #8b949e; font-size: 14px;">Platform Management</span>
+        </div>
+        <div>
+            <button class="btn btn-secondary" onclick="showCreateMerchantModal()">+ Create Merchant</button>
+            <button class="btn btn-danger" onclick="logout()">Logout</button>
+        </div>
+    </div>
+
+    <div class="stats-grid">
+        <div class="stat-box">
+            <div class="stat-label">Total Merchants</div>
+            <div class="stat-value" id="totalMerchants">-</div>
+        </div>
+        <div class="stat-box">
+            <div class="stat-label">Active</div>
+            <div class="stat-value" style="color: #3fb950;" id="activeMerchants">-</div>
+        </div>
+        <div class="stat-box">
+            <div class="stat-label">Inactive</div>
+            <div class="stat-value" style="color: #f85149;" id="inactiveMerchants">-</div>
+        </div>
+        <div class="stat-box">
+            <div class="stat-label">Total Wallets</div>
+            <div class="stat-value" id="totalWallets">-</div>
+        </div>
+    </div>
+
+    <div class="card">
+        <h3 style="margin-top: 0;">Merchant Management</h3>
+        <div class="filter-bar">
+            <input type="text" id="searchInput" placeholder="Search by name..." onkeyup="debounceSearch()">
+            <select id="statusFilter" onchange="loadMerchants()">
+                <option value="">All Status</option>
+                <option value="true">Active Only</option>
+                <option value="false">Inactive Only</option>
+            </select>
+            <button class="btn btn-secondary" onclick="loadMerchants()">Refresh</button>
+        </div>
+        <table>
+            <thead>
+            <tr>
+                <th>Merchant ID</th>
+                <th>Name</th>
+                <th>Status</th>
+                <th>Wallets</th>
+                <th>Created At</th>
+                <th>Actions</th>
+            </tr>
+            </thead>
+            <tbody id="merchantsTable">
+            <tr><td colspan="6" style="text-align: center; color: #8b949e;">Loading...</td></tr>
+            </tbody>
+        </table>
+        <div class="pagination" id="pagination"></div>
+    </div>
+</div>
+
+<!-- Create Merchant Modal -->
+<div id="createMerchantModal" class="modal">
+    <div class="modal-content">
+        <span class="close" onclick="closeCreateMerchantModal()">&times;</span>
+        <h3>Create New Merchant</h3>
+        <div id="createMerchantError" class="error hidden"></div>
+        <div id="createMerchantSuccess" class="hidden">
+            <div class="warning">
+                <strong>⚠️ Important:</strong> Copy these credentials now and store them securely. They will NOT be shown again!
+            </div>
+            <div class="credentials-box" id="merchantCredentials"></div>
+            <button class="btn btn-secondary" onclick="closeCreateMerchantModal()">Close</button>
+        </div>
+        <div id="createMerchantForm">
+            <input type="text" id="merchantName" class="input" placeholder="Merchant Name" required>
+            <input type="text" id="merchantWebhookUrl" class="input" placeholder="Webhook URL (https://...)" required>
+            <input type="text" id="merchantXPub" class="input" placeholder="TRON Account xPub" required>
+            <button class="btn" onclick="createMerchant()">Create Merchant</button>
+        </div>
+    </div>
+</div>
+
+<!-- Merchant Details Modal -->
+<div id="merchantDetailsModal" class="modal">
+    <div class="modal-content">
+        <span class="close" onclick="closeMerchantDetailsModal()">&times;</span>
+        <h3>Merchant Details</h3>
+        <div id="merchantDetailsContent"></div>
+    </div>
+</div>
+
+<script>
+    const API_BASE = '/api/v1';
+    let currentPage = 1;
+    let searchTimeout = null;
+
+    async function checkAuth() {
+        try {
+            const res = await fetch(`${API_BASE}/admin/overview`, { credentials: 'include' });
+            if (res.ok) {
+                document.getElementById('loginView').classList.add('hidden');
+                document.getElementById('adminView').classList.remove('hidden');
+                loadOverview();
+                loadMerchants();
+            } else if (res.status === 401 || res.status === 403) {
+                showLogin();
+            }
+        } catch {
+            showLogin();
+        }
+    }
+
+    async function login() {
+        const email = document.getElementById('email').value;
+        const password = document.getElementById('password').value;
+        const errorDiv = document.getElementById('loginError');
+
+        try {
+            const res = await fetch(`${API_BASE}/auth/login`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email, password }),
+                credentials: 'include'
+            });
+
+            const data = await res.json();
+            if (res.ok) {
+                checkAuth();
+            } else {
+                errorDiv.textContent = data.error || 'Login failed';
+                errorDiv.classList.remove('hidden');
+            }
+        } catch (e) {
+            errorDiv.textContent = 'Network error';
+            errorDiv.classList.remove('hidden');
+        }
+    }
+
+    async function logout() {
+        await fetch(`${API_BASE}/auth/logout`, { method: 'POST', credentials: 'include' }).catch(() => {});
+        showLogin();
+    }
+
+    function showLogin() {
+        document.getElementById('adminView').classList.add('hidden');
+        document.getElementById('loginView').classList.remove('hidden');
+    }
+
+    async function loadOverview() {
+        try {
+            const res = await fetch(`${API_BASE}/admin/overview`, { credentials: 'include' });
+            if (!res.ok) {
+                if (res.status === 401 || res.status === 403) return showLogin();
+                return;
+            }
+            const data = await res.json();
+            document.getElementById('totalMerchants').textContent = data.totalMerchants;
+            document.getElementById('activeMerchants').textContent = data.activeMerchants;
+            document.getElementById('inactiveMerchants').textContent = data.inactiveMerchants;
+            document.getElementById('totalWallets').textContent = data.totalWallets;
+        } catch (e) {
+            console.error("Failed to load overview", e);
+        }
+    }
+
+    async function loadMerchants() {
+        const search = document.getElementById('searchInput').value;
+        const statusFilter = document.getElementById('statusFilter').value;
+        const tbody = document.getElementById('merchantsTable');
+
+        try {
+            let url = `${API_BASE}/admin/merchants?page=${currentPage}&pageSize=10`;
+            if (search) url += `&search=${encodeURIComponent(search)}`;
+            if (statusFilter) url += `&isActive=${statusFilter}`;
+
+            const res = await fetch(url, { credentials: 'include' });
+            if (!res.ok) {
+                if (res.status === 401 || res.status === 403) return showLogin();
+                tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; color: #f85149;">Failed to load merchants</td></tr>';
+                return;
+            }
+
+            const data = await res.json();
+            tbody.innerHTML = '';
+
+            if (data.items.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; color: #8b949e;">No merchants found.</td></tr>';
+            } else {
+                data.items.forEach(m => {
+                    const statusClass = m.isActive ? 'status-active' : 'status-inactive';
+                    const statusText = m.isActive ? 'Active' : 'Inactive';
+                    const actionBtn = m.isActive
+                        ? `<button class="btn btn-warning" onclick="deactivateMerchant('${m.merchantId}')">Deactivate</button>`
+                        : `<button class="btn" onclick="activateMerchant('${m.merchantId}')">Activate</button>`;
+
+                    tbody.innerHTML += `
+<tr>
+<td style="font-family: monospace;">${m.merchantId.substring(0, 8)}...</td>
+<td>${m.name}</td>
+<td class="${statusClass}">${statusText}</td>
+<td>${m.walletCount}</td>
+<td>${new Date(m.createdAtUtc).toLocaleDateString()}</td>
+<td>
+<button class="btn btn-secondary" onclick="viewMerchantDetails('${m.merchantId}')">Details</button>
+${actionBtn}
+</td>
+</tr>
+`;
+                });
+            }
+
+            renderPagination(data.totalPages);
+        } catch (e) {
+            console.error("Failed to load merchants", e);
+            tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; color: #f85149;">Error loading merchants</td></tr>';
+        }
+    }
+
+    function renderPagination(totalPages) {
+        const pagination = document.getElementById('pagination');
+        pagination.innerHTML = '';
+
+        if (totalPages <= 1) return;
+
+        for (let i = 1; i <= totalPages; i++) {
+            const btn = document.createElement('button');
+            btn.className = i === currentPage ? 'btn' : 'btn btn-secondary';
+            btn.textContent = i;
+            btn.onclick = () => {
+                currentPage = i;
+                loadMerchants();
+            };
+            pagination.appendChild(btn);
+        }
+    }
+
+    function debounceSearch() {
+        clearTimeout(searchTimeout);
+        searchTimeout = setTimeout(() => {
+            currentPage = 1;
+            loadMerchants();
+        }, 300);
+    }
+
+    async function activateMerchant(merchantId) {
+        if (!confirm('Are you sure you want to activate this merchant?')) return;
+
+        try {
+            const res = await fetch(`${API_BASE}/admin/merchants/${merchantId}/activate`, {
+                method: 'POST',
+                credentials: 'include'
+            });
+
+            if (res.ok) {
+                alert('Merchant activated successfully');
+                loadOverview();
+                loadMerchants();
+            } else {
+                const data = await res.json();
+                alert('Failed to activate: ' + (data.error || 'Unknown error'));
+            }
+        } catch (e) {
+            alert('Network error');
+        }
+    }
+
+    async function deactivateMerchant(merchantId) {
+        if (!confirm('Are you sure you want to deactivate this merchant?')) return;
+
+        try {
+            const res = await fetch(`${API_BASE}/admin/merchants/${merchantId}/deactivate`, {
+                method: 'POST',
+                credentials: 'include'
+            });
+
+            if (res.ok) {
+                alert('Merchant deactivated successfully');
+                loadOverview();
+                loadMerchants();
+            } else {
+                const data = await res.json();
+                alert('Failed to deactivate: ' + (data.error || 'Unknown error'));
+            }
+        } catch (e) {
+            alert('Network error');
+        }
+    }
+
+    async function viewMerchantDetails(merchantId) {
+        try {
+            const res = await fetch(`${API_BASE}/admin/merchants/${merchantId}`, { credentials: 'include' });
+            if (!res.ok) {
+                if (res.status === 401 || res.status === 403) return showLogin();
+                alert('Failed to load merchant details');
+                return;
+            }
+
+            const data = await res.json();
+            const content = document.getElementById('merchantDetailsContent');
+            content.innerHTML = `
+<p><strong>Merchant ID:</strong> ${data.merchantId}</p>
+<p><strong>Name:</strong> ${data.name}</p>
+<p><strong>Status:</strong> <span class="${data.isActive ? 'status-active' : 'status-inactive'}">${data.isActive ? 'Active' : 'Inactive'}</span></p>
+<p><strong>Created At:</strong> ${new Date(data.createdAtUtc).toLocaleString()}</p>
+<p><strong>Default Webhook URL:</strong> ${data.defaultWebhookUrl || 'Not set'}</p>
+<p><strong>Wallet Count:</strong> ${data.walletCount}</p>
+<p><strong>Total Invoice Count:</strong> ${data.totalInvoiceCount}</p>
+<h4>Wallets</h4>
+${data.wallets.length > 0 ? `
+<table>
+<thead><tr><th>Wallet ID</th><th>Network</th><th>Addresses</th><th>Created</th></tr></thead>
+<tbody>
+${data.wallets.map(w => `
+<tr>
+<td style="font-family: monospace;">${w.walletId.substring(0, 8)}...</td>
+<td>${w.network}</td>
+<td>${w.totalAddressesAllocated}</td>
+<td>${new Date(w.createdAtUtc).toLocaleDateString()}</td>
+</tr>
+`).join('')}
+</tbody>
+</table>
+` : '<p style="color: #8b949e;">No wallets configured</p>'}
+<div style="margin-top: 16px;">
+<button class="btn btn-secondary" onclick="generateInvite('${data.merchantId}')">Generate Invitation</button>
+</div>
+<div id="inviteResult" class="hidden" style="margin-top: 16px;"></div>
+`;
+
+            document.getElementById('merchantDetailsModal').style.display = 'block';
+        } catch (e) {
+            console.error("Failed to load merchant details", e);
+            alert('Error loading merchant details');
+        }
+    }
+
+    async function generateInvite(merchantId) {
+        try {
+            const res = await fetch(`${API_BASE}/admin/merchants/${merchantId}/invite`, {
+                method: 'POST',
+                credentials: 'include'
+            });
+
+            if (!res.ok) {
+                const data = await res.json();
+                alert('Failed to generate invite: ' + (data.error || 'Unknown error'));
+                return;
+            }
+
+            const data = await res.json();
+            const resultDiv = document.getElementById('inviteResult');
+            resultDiv.classList.remove('hidden');
+            resultDiv.innerHTML = `
+<div class="warning">
+<strong>Invitation Token Generated:</strong><br>
+<div class="credentials-box">${data.inviteToken}</div>
+<p style="margin-top: 8px;">${data.message}</p>
+<p style="margin-top: 8px; color: #8b949e;">Provide this token to the user out-of-band.</p>
+</div>
+`;
+        } catch (e) {
+            alert('Network error');
+        }
+    }
+
+    function showCreateMerchantModal() {
+        document.getElementById('createMerchantModal').style.display = 'block';
+        document.getElementById('createMerchantForm').classList.remove('hidden');
+        document.getElementById('createMerchantSuccess').classList.add('hidden');
+        document.getElementById('createMerchantError').classList.add('hidden');
+        document.getElementById('merchantName').value = '';
+        document.getElementById('merchantWebhookUrl').value = '';
+        document.getElementById('merchantXPub').value = '';
+    }
+
+    function closeCreateMerchantModal() {
+        document.getElementById('createMerchantModal').style.display = 'none';
+    }
+
+    function closeMerchantDetailsModal() {
+        document.getElementById('merchantDetailsModal').style.display = 'none';
+    }
+
+    async function createMerchant() {
+        const name = document.getElementById('merchantName').value;
+        const webhookUrl = document.getElementById('merchantWebhookUrl').value;
+        const xpub = document.getElementById('merchantXPub').value;
+        const errorDiv = document.getElementById('createMerchantError');
+
+        if (!name || !webhookUrl || !xpub) {
+            errorDiv.textContent = 'All fields are required';
+            errorDiv.classList.remove('hidden');
+            return;
+        }
+
+        try {
+            const res = await fetch(`${API_BASE}/merchants/register`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    name: name,
+                    webhookUrl: webhookUrl,
+                    tronAccountXPub: xpub
+                }),
+                credentials: 'include'
+            });
+
+            if (!res.ok) {
+                const data = await res.json();
+                errorDiv.textContent = data.error || 'Failed to create merchant';
+                errorDiv.classList.remove('hidden');
+                return;
+            }
+
+            const data = await res.json();
+            document.getElementById('createMerchantForm').classList.add('hidden');
+            document.getElementById('createMerchantSuccess').classList.remove('hidden');
+            document.getElementById('merchantCredentials').innerHTML = `
+<p><strong>Merchant ID:</strong> ${data.merchantId}</p>
+<p><strong>Name:</strong> ${data.name}</p>
+<p><strong>API Key:</strong> ${data.apiKey}</p>
+<p><strong>API Secret:</strong> ${data.apiSecret}</p>
+<p><strong>Webhook Secret:</strong> ${data.webhookSecret}</p>
+<p><strong>TRON Account xPub:</strong> ${data.tronAccountXPub}</p>
+<p><strong>Created At:</strong> ${new Date(data.createdAtUtc).toLocaleString()}</p>
+`;
+
+            loadOverview();
+            loadMerchants();
+        } catch (e) {
+            errorDiv.textContent = 'Network error';
+            errorDiv.classList.remove('hidden');
+        }
+    }
+
+    window.onclick = function(event) {
+        if (event.target.classList.contains('modal')) {
+            event.target.style.display = 'none';
+        }
+    }
+
+    checkAuth();
+</script>
+</body>
+</html>
