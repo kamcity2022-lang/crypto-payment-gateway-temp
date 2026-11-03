@@ -54,7 +54,8 @@ public class AdminMerchantFilterRequest
 {
     public int Page { get; set; } = 1;
     
-    [Range(1, 100)]
+    // ✅ اصلاح: حذف [Range(1, 100)] برای اجازه دادن به Math.Clamp در کنترلر
+    // این کار باعث می‌شود مقادیر خارج از محدوده به جای رد شدن، به محدوده معتبر محدود شوند
     public int PageSize { get; set; } = 20;
     
     public string? Search { get; set; }
