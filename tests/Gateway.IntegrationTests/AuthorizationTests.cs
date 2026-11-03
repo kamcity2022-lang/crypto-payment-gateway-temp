@@ -16,7 +16,7 @@ public class AuthorizationTests
     [Fact]
     public async Task HandleRequirementAsync_SuperAdmin_ShouldSucceed_AndResolveTargetMerchantId()
     {
-        var handler = new MerchantIdHandler();
+        var handler = new MerchantIdHandler(null!);
         var requirement = new MerchantIdRequirement();
         var targetMerchantId = Guid.NewGuid();
 
@@ -39,7 +39,7 @@ public class AuthorizationTests
     [Fact]
     public async Task HandleRequirementAsync_MerchantUser_OtherResource_ShouldFail()
     {
-        var handler = new MerchantIdHandler();
+        var handler = new MerchantIdHandler(null!);
         var requirement = new MerchantIdRequirement();
         var userMerchantId = Guid.NewGuid();
         var targetMerchantId = Guid.NewGuid();
@@ -63,7 +63,7 @@ public class AuthorizationTests
     public async Task HandleRequirementAsync_HmacOnlyIdentity_ShouldFail()
     {
         // ✅ FIX: HMAC-only identity (no MerchantId claim) should NOT satisfy human-user policies
-        var handler = new MerchantIdHandler();
+        var handler = new MerchantIdHandler(null!);
         var requirement = new MerchantIdRequirement();
         var merchantId = Guid.NewGuid();
 

@@ -11,15 +11,17 @@ namespace Gateway.Api.Authorization;
 
 public class MerchantIdHandler : AuthorizationHandler<MerchantIdRequirement>
 {
+    // ✅ Nullable است تا تست‌های واحد بتوانند بدون دیتابیس واقعی اجرا شوند.
+    // در Production، DI همیشه یک نمونه معتبر تزریق می‌کند.
     private readonly GatewayDbContext? _dbContext;
 
-    // پارامتر اختیاری است تا تست‌های واحد بتوانند بدون دیتابیس واقعی اجرا شوند
     public MerchantIdHandler(GatewayDbContext? dbContext = null)
     {
         _dbContext = dbContext;
     }
 
-    protected override async Task HandleRequirementAsync(AuthorizationHandlerContext context, MerchantIdRequirement requirement)
+    protected override async Task HandleRequirementAsync(AuthorizationHandlerContext context,
+        MerchantIdRequirement requirement)
     {
         if (context.Resource is not HttpContext httpContext) return;
 
@@ -58,12 +60,13 @@ public class MerchantIdHandler : AuthorizationHandler<MerchantIdRequirement>
 
         if (string.IsNullOrEmpty(targetMerchantIdStr))
         {
+            // ✅ بررسی دیتابیس فقط در صورتی انجام می‌شود که DbContext تزریق شده باشد (Production)
             if (_dbContext != null)
             {
                 var merchant = await _dbContext.Merchants.AsNoTracking().FirstOrDefaultAsync(m => m.Id == userMerchantId);
                 if (merchant == null || !merchant.IsActive)
                 {
-                    return;
+                    return; // Fail authorization if merchant is inactive or not found
                 }
             }
 
@@ -79,7 +82,7 @@ public class MerchantIdHandler : AuthorizationHandler<MerchantIdRequirement>
                 var merchant = await _dbContext.Merchants.AsNoTracking().FirstOrDefaultAsync(m => m.Id == userMerchantId);
                 if (merchant == null || !merchant.IsActive)
                 {
-                    return;
+                    return; // Fail authorization if merchant is inactive or not found
                 }
             }
 

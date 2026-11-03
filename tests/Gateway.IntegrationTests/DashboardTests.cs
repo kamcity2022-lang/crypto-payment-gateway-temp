@@ -14,7 +14,7 @@ public class DashboardTests
     [Fact]
     public async Task DashboardOverview_WithValidMerchantClaim_ShouldSucceed()
     {
-        var handler = new MerchantIdHandler();
+        var handler = new MerchantIdHandler(null!);
         var requirement = new MerchantIdRequirement();
         var merchantId = Guid.NewGuid();
 
@@ -37,7 +37,7 @@ public class DashboardTests
     [Fact]
     public async Task DashboardOverview_SuperAdminWithoutMerchantClaim_ShouldForbid()
     {
-        var handler = new MerchantIdHandler();
+        var handler = new MerchantIdHandler(null!);
         var requirement = new MerchantIdRequirement();
 
         var user = new ClaimsPrincipal(new ClaimsIdentity(new[]
