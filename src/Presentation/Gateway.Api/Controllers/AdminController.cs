@@ -122,4 +122,28 @@ public class AdminController : ControllerBase
 
         return Ok(merchant);
     }
+    
+    [HttpPost("merchants/{merchantId:guid}/activate")]
+    public async Task<IActionResult> ActivateMerchant(Guid merchantId, CancellationToken ct)
+    {
+        var merchant = await _dbContext.Merchants.FirstOrDefaultAsync(m => m.Id == merchantId, ct);
+        if (merchant == null) return NotFound(new { error = "Merchant not found." });
+
+        merchant.Activate();
+        await _dbContext.SaveChangesAsync(ct);
+
+        return Ok(new { message = "Merchant activated successfully." });
+    }
+
+    [HttpPost("merchants/{merchantId:guid}/deactivate")]
+    public async Task<IActionResult> DeactivateMerchant(Guid merchantId, CancellationToken ct)
+    {
+        var merchant = await _dbContext.Merchants.FirstOrDefaultAsync(m => m.Id == merchantId, ct);
+        if (merchant == null) return NotFound(new { error = "Merchant not found." });
+
+        merchant.Deactivate();
+        await _dbContext.SaveChangesAsync(ct);
+
+        return Ok(new { message = "Merchant deactivated successfully." });
+    }
 }

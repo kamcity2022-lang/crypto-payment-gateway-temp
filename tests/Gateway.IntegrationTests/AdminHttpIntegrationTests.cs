@@ -29,7 +29,9 @@ public class TestAuthHandler : AuthenticationHandler<AuthenticationSchemeOptions
     public TestAuthHandler(
         IOptionsMonitor<AuthenticationSchemeOptions> options,
         ILoggerFactory logger,
-        UrlEncoder encoder) : base(options, logger, encoder) { }
+        UrlEncoder encoder) : base(options, logger, encoder)
+    {
+    }
 
     protected override Task<AuthenticateResult> HandleAuthenticateAsync()
     {
@@ -50,7 +52,8 @@ public class TestAuthHandler : AuthenticationHandler<AuthenticationSchemeOptions
             claims.Add(new Claim(ClaimTypes.Role, role.Trim()));
         }
 
-        if (Context.Request.Headers.TryGetValue("X-Test-MerchantId", out var merchantIdHeader) && Guid.TryParse(merchantIdHeader, out var merchantId))
+        if (Context.Request.Headers.TryGetValue("X-Test-MerchantId", out var merchantIdHeader) &&
+            Guid.TryParse(merchantIdHeader, out var merchantId))
         {
             claims.Add(new Claim("MerchantId", merchantId.ToString()));
         }
@@ -86,11 +89,11 @@ public class TestWebApplicationFactory : WebApplicationFactory<Program>
                 options.UseNpgsql(_connectionString));
 
             services.AddAuthentication(options =>
-            {
-                options.DefaultAuthenticateScheme = "TestScheme";
-                options.DefaultChallengeScheme = "TestScheme";
-            })
-            .AddScheme<AuthenticationSchemeOptions, TestAuthHandler>("TestScheme", options => { });
+                {
+                    options.DefaultAuthenticateScheme = "TestScheme";
+                    options.DefaultChallengeScheme = "TestScheme";
+                })
+                .AddScheme<AuthenticationSchemeOptions, TestAuthHandler>("TestScheme", options => { });
         });
     }
 
@@ -103,6 +106,7 @@ public class TestWebApplicationFactory : WebApplicationFactory<Program>
         {
             client.DefaultRequestHeaders.Add("X-Test-MerchantId", merchantId.Value.ToString());
         }
+
         return client;
     }
 }
@@ -123,7 +127,8 @@ public class AdminHttpIntegrationTests : IAsyncLifetime
 
         _factory = new TestWebApplicationFactory(_dbContainer.GetConnectionString());
 
-        _unauthorizedClient = _factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+        _unauthorizedClient =
+            _factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
         _merchantClient = _factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
         _superAdminClient = _factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
 
@@ -139,16 +144,23 @@ public class AdminHttpIntegrationTests : IAsyncLifetime
         if (!await roleManager.RoleExistsAsync("Owner"))
             await roleManager.CreateAsync(new IdentityRole("Owner"));
 
-        var superAdmin = new ApplicationUser { UserName = "superadmin@test.com", Email = "superadmin@test.com", IsSuperAdmin = true, EmailConfirmed = true };
+        var superAdmin = new ApplicationUser
+        {
+            UserName = "superadmin@test.com", Email = "superadmin@test.com", IsSuperAdmin = true, EmailConfirmed = true
+        };
         await userManager.CreateAsync(superAdmin, "SuperAdmin@123!");
         await userManager.AddToRoleAsync(superAdmin, "SuperAdmin");
 
         var merchantId = Guid.NewGuid();
         // ✅ اصلاح: استفاده از hash یکتا برای جلوگیری از تداخل با حلقه زیر
-        var merchant = new Merchant(merchantId, "Test Merchant", "hash_main_merchant", "secret_main", "webhook_secret_main");
+        var merchant = new Merchant(merchantId, "Test Merchant", "hash_main_merchant", "secret_main",
+            "webhook_secret_main");
         dbContext.Merchants.Add(merchant);
 
-        var merchantUser = new ApplicationUser { UserName = "merchant@test.com", Email = "merchant@test.com", MerchantId = merchantId, EmailConfirmed = true };
+        var merchantUser = new ApplicationUser
+        {
+            UserName = "merchant@test.com", Email = "merchant@test.com", MerchantId = merchantId, EmailConfirmed = true
+        };
         await userManager.CreateAsync(merchantUser, "Merchant@123!");
         await userManager.AddToRoleAsync(merchantUser, "Owner");
 
@@ -158,6 +170,7 @@ public class AdminHttpIntegrationTests : IAsyncLifetime
             var m = new Merchant(Guid.NewGuid(), $"Merchant {i:D2}", $"hash{i}", $"secret{i}", $"webhook{i}");
             dbContext.Merchants.Add(m);
         }
+
         await dbContext.SaveChangesAsync();
 
         // Use reflection to set some merchants to inactive for testing the IsActive filter
@@ -166,10 +179,13 @@ public class AdminHttpIntegrationTests : IAsyncLifetime
         {
             if (i % 2 == 0)
             {
-                var prop = typeof(Merchant).GetProperty("IsActive", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public);
+                var prop = typeof(Merchant).GetProperty("IsActive",
+                    System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic |
+                    System.Reflection.BindingFlags.Public);
                 prop?.SetValue(allMerchants[i], false);
             }
         }
+
         await dbContext.SaveChangesAsync();
 
         _superAdminClient = _factory.CreateClientWithAuth("superadmin@test.com", new[] { "SuperAdmin" });
@@ -283,5 +299,114 @@ public class AdminHttpIntegrationTests : IAsyncLifetime
         json.Should().NotContain("EncryptedWebhookSecret", "sensitive credentials must not be exposed");
         json.Should().NotContain("Secret", "sensitive credentials must not be exposed");
         json.Should().NotContain("Hash", "sensitive credentials must not be exposed");
+    }
+
+    [Fact]
+    public async Task ActivateMerchant_InactiveMerchant_ShouldSucceed()
+    {
+        // Create a merchant and set it to inactive using reflection
+        await using var scope = _factory.Services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<GatewayDbContext>();
+
+        var merchantId = Guid.NewGuid();
+        var merchant = new Merchant(merchantId, "Inactive Test Merchant", "hash_inactive", "secret_inactive",
+            "webhook_inactive");
+        dbContext.Merchants.Add(merchant);
+        await dbContext.SaveChangesAsync();
+
+        // Set IsActive to false using reflection
+        var prop = typeof(Merchant).GetProperty("IsActive",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic |
+            System.Reflection.BindingFlags.Public);
+        prop?.SetValue(merchant, false);
+        await dbContext.SaveChangesAsync();
+
+        // Verify initial state
+        var beforeActivate = await dbContext.Merchants.AsNoTracking().FirstAsync(m => m.Id == merchantId);
+        beforeActivate.IsActive.Should().BeFalse();
+
+        // Act
+        var response = await _superAdminClient.PostAsync($"/api/v1/admin/merchants/{merchantId}/activate", null);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var afterActivate = await dbContext.Merchants.AsNoTracking().FirstAsync(m => m.Id == merchantId);
+        afterActivate.IsActive.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task DeactivateMerchant_ActiveMerchant_ShouldSucceed()
+    {
+        // Create an active merchant
+        await using var scope = _factory.Services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<GatewayDbContext>();
+
+        var merchantId = Guid.NewGuid();
+        var merchant = new Merchant(merchantId, "Active Test Merchant", "hash_active", "secret_active",
+            "webhook_active");
+        dbContext.Merchants.Add(merchant);
+        await dbContext.SaveChangesAsync();
+
+        // Verify initial state (IsActive is true by default from constructor)
+        var beforeDeactivate = await dbContext.Merchants.AsNoTracking().FirstAsync(m => m.Id == merchantId);
+        beforeDeactivate.IsActive.Should().BeTrue();
+
+        // Act
+        var response = await _superAdminClient.PostAsync($"/api/v1/admin/merchants/{merchantId}/deactivate", null);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var afterDeactivate = await dbContext.Merchants.AsNoTracking().FirstAsync(m => m.Id == merchantId);
+        afterDeactivate.IsActive.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task ActivateMerchant_NonExistentMerchant_ShouldReturnNotFound()
+    {
+        var fakeId = Guid.NewGuid();
+        var response = await _superAdminClient.PostAsync($"/api/v1/admin/merchants/{fakeId}/activate", null);
+        response.StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+
+    [Fact]
+    public async Task DeactivateMerchant_NonExistentMerchant_ShouldReturnNotFound()
+    {
+        var fakeId = Guid.NewGuid();
+        var response = await _superAdminClient.PostAsync($"/api/v1/admin/merchants/{fakeId}/deactivate", null);
+        response.StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+
+    [Fact]
+    public async Task ActivateMerchant_Unauthenticated_ShouldReturnUnauthorized()
+    {
+        var merchantId = Guid.NewGuid();
+        var response = await _unauthorizedClient.PostAsync($"/api/v1/admin/merchants/{merchantId}/activate", null);
+        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+    }
+
+    [Fact]
+    public async Task DeactivateMerchant_Unauthenticated_ShouldReturnUnauthorized()
+    {
+        var merchantId = Guid.NewGuid();
+        var response = await _unauthorizedClient.PostAsync($"/api/v1/admin/merchants/{merchantId}/deactivate", null);
+        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+    }
+
+    [Fact]
+    public async Task ActivateMerchant_MerchantUser_ShouldReturnForbidden()
+    {
+        var merchantId = Guid.NewGuid();
+        var response = await _merchantClient.PostAsync($"/api/v1/admin/merchants/{merchantId}/activate", null);
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+    }
+
+    [Fact]
+    public async Task DeactivateMerchant_MerchantUser_ShouldReturnForbidden()
+    {
+        var merchantId = Guid.NewGuid();
+        var response = await _merchantClient.PostAsync($"/api/v1/admin/merchants/{merchantId}/deactivate", null);
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
     }
 }
