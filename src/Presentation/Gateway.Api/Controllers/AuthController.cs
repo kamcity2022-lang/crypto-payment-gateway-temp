@@ -6,9 +6,11 @@ using System.Threading.Tasks;
 using Gateway.Domain.Entities;
 using Gateway.Persistence;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 
 namespace Gateway.Api.Controllers;
@@ -22,19 +24,30 @@ public class AuthController : ControllerBase
     private readonly SignInManager<ApplicationUser> _signInManager;
     private readonly ILogger<AuthController> _logger;
     private readonly IConfiguration _configuration;
+    private readonly IWebHostEnvironment _environment;
 
     public AuthController(
         GatewayDbContext dbContext,
         UserManager<ApplicationUser> userManager,
         SignInManager<ApplicationUser> signInManager,
         ILogger<AuthController> logger,
-        IConfiguration configuration)
+        IConfiguration configuration,
+        IWebHostEnvironment environment)
     {
         _dbContext = dbContext;
         _userManager = userManager;
         _signInManager = signInManager;
         _logger = logger;
         _configuration = configuration;
+        _environment = environment;
+    }
+
+    private bool IsDevelopmentEmailBypassEnabled()
+    {
+        // ✅ CRITICAL: Bypass is ONLY allowed in Development environment
+        // In Production, this always returns false regardless of config values
+        return _environment.IsDevelopment()
+            && _configuration.GetValue<bool>("DevOptions:BypassEmailConfirmation", false);
     }
 
     [HttpPost("activate")]
@@ -49,18 +62,15 @@ public class AuthController : ControllerBase
 
         var hashedToken = HashToken(request.Token);
 
-        // ✅ Transactional activation: all-or-nothing
         await using var transaction = await _dbContext.Database.BeginTransactionAsync(ct);
         try
         {
-            // 1. Atomically claim the token with FOR UPDATE SKIP LOCKED
-            //    This prevents concurrent activation attempts from creating duplicate users.
             var tokenRecord = await _dbContext.MerchantClaimTokens
                 .FromSqlInterpolated($@"
-                    SELECT * FROM ""MerchantClaimTokens"" 
-                    WHERE ""HashedToken"" = {hashedToken} 
-                      AND ""IsUsed"" = false 
-                      AND ""ExpiresAtUtc"" > {DateTime.UtcNow}
+                    SELECT * FROM ""MerchantClaimTokens""
+                    WHERE ""HashedToken"" = {hashedToken}
+                    AND ""IsUsed"" = false
+                    AND ""ExpiresAtUtc"" > {DateTime.UtcNow}
                     FOR UPDATE SKIP LOCKED")
                 .FirstOrDefaultAsync(ct);
 
@@ -70,7 +80,6 @@ public class AuthController : ControllerBase
                 return BadRequest(new { error = "Invalid, expired, or already used activation token." });
             }
 
-            // 2. Prevent duplicate user creation
             var existingUser = await _userManager.FindByEmailAsync(request.Email);
             if (existingUser != null)
             {
@@ -78,14 +87,13 @@ public class AuthController : ControllerBase
                 return Conflict(new { error = "An account with this email already exists." });
             }
 
-            // 3. Create user (EmailConfirmed remains false; email verification flow is not yet implemented)
             var user = new ApplicationUser
             {
                 UserName = request.Email,
                 Email = request.Email,
                 MerchantId = tokenRecord.MerchantId,
-                // ✅ فقط در محیط Development تایید ایمیل را دور می‌زند
-                EmailConfirmed = _configuration.GetValue<bool>("DevOptions:BypassEmailConfirmation", false) 
+                // ✅ EmailConfirmed=false by default; only bypass in Development
+                EmailConfirmed = IsDevelopmentEmailBypassEnabled()
             };
 
             var createResult = await _userManager.CreateAsync(user, request.Password);
@@ -95,7 +103,6 @@ public class AuthController : ControllerBase
                 return BadRequest(new { error = "User creation failed.", details = createResult.Errors });
             }
 
-            // 4. Assign Owner role and validate result
             var roleResult = await _userManager.AddToRoleAsync(user, "Owner");
             if (!roleResult.Succeeded)
             {
@@ -103,15 +110,15 @@ public class AuthController : ControllerBase
                 return BadRequest(new { error = "Role assignment failed.", details = roleResult.Errors });
             }
 
-            // 5. Mark token as used
             tokenRecord.MarkAsUsed();
             await _dbContext.SaveChangesAsync(ct);
-
             await transaction.CommitAsync(ct);
 
             return Ok(new
             {
-                message = "Account activated successfully. Email verification will be required before login in a future release."
+                message = IsDevelopmentEmailBypassEnabled()
+                    ? "Account activated successfully (dev bypass: email auto-confirmed)."
+                    : "Account activated. Please verify your email before logging in."
             });
         }
         catch (Exception ex)
@@ -136,10 +143,11 @@ public class AuthController : ControllerBase
             return Unauthorized(new { error = "Invalid credentials." });
         }
 
-        // ✅ Enforce email verification: unverified accounts cannot log in
+        // ✅ CRITICAL: In Production, email MUST be confirmed
+        // The bypass is only checked at activation time, not at login
         if (!user.EmailConfirmed)
         {
-            return Unauthorized(new { error = "Email verification required. This feature will be available in a future release." });
+            return Unauthorized(new { error = "Email verification required." });
         }
 
         var result = await _signInManager.CheckPasswordSignInAsync(user, request.Password, lockoutOnFailure: true);
@@ -156,9 +164,13 @@ public class AuthController : ControllerBase
         return Ok(new { message = "Login successful." });
     }
 
-    // TODO: Re-implement in Task 2 with [Authorize(Roles = "SuperAdmin")] policy
-    // and proper SuperAdmin bootstrap mechanism. Disabled for now to prevent public exposure.
-    
+    [HttpPost("logout")]
+    public async Task<IActionResult> Logout()
+    {
+        await _signInManager.SignOutAsync();
+        return Ok(new { message = "Logged out successfully." });
+    }
+
     [HttpPost("admin/merchants/{merchantId:guid}/invite")]
     [Authorize(Policy = "SuperAdminOnly")]
     public async Task<IActionResult> GenerateInvite(Guid merchantId, CancellationToken ct)
@@ -168,22 +180,15 @@ public class AuthController : ControllerBase
 
         var plainToken = Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
         var tokenRecord = new MerchantClaimToken(merchantId, plainToken, TimeSpan.FromDays(7));
-    
+
         _dbContext.MerchantClaimTokens.Add(tokenRecord);
         await _dbContext.SaveChangesAsync(ct);
 
-        // Returned to the authorized SuperAdmin caller for secure out-of-band transmission
-        return Ok(new { 
+        return Ok(new
+        {
             message = "Invite token generated securely. Provide this to the user out-of-band.",
-            inviteToken = plainToken 
+            inviteToken = plainToken
         });
-    }
-    
-    [HttpPost("logout")]
-    public async Task<IActionResult> Logout()
-    {
-        await _signInManager.SignOutAsync();
-        return Ok(new { message = "Logged out successfully." });
     }
 
     private static string HashToken(string token)

@@ -25,20 +25,3 @@ public class RegisterMerchantResponse
     public string TronAccountXPub { get; set; } = string.Empty;
     public DateTime CreatedAtUtc { get; set; }
 }
-
-public class MerchantProfileDto
-{
-    public Guid MerchantId { get; set; }
-    public string Name { get; set; } = string.Empty;
-    public bool IsActive { get; set; }
-    public DateTime CreatedAtUtc { get; set; }
-    public List<MerchantWalletDto> Wallets { get; set; } = new();
-}
-
-public class MerchantWalletDto
-{
-    public Guid WalletId { get; set; }
-    public string Network { get; set; } = string.Empty;
-    public uint TotalAddressesAllocated { get; set; }
-    public DateTime CreatedAtUtc { get; set; }
-}

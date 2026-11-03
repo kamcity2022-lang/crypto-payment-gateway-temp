@@ -1,23 +1,28 @@
+using Gateway.Api.Identity;
 using Gateway.Application.Contracts;
 using Gateway.Blockchain.Tron;
 using Gateway.Domain.Entities;
 using Gateway.Infrastructure.Security;
 using Gateway.Persistence;
-using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// 1. Database Connection
-var connectionString = builder.Configuration.GetConnectionString("DefaultConnection")
-    ?? throw new InvalidOperationException("Connection string 'DefaultConnection' is required.");
+// 1. Database Connection (from config/UserSecrets/env vars)
+var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
+if (string.IsNullOrWhiteSpace(connectionString))
+{
+    throw new InvalidOperationException(
+        "Fatal: 'DefaultConnection' connection string is missing. " +
+        "Set it via User Secrets (Development) or environment variables (Production).");
+}
 
 builder.Services.AddDbContext<GatewayDbContext>(options =>
     options.UseNpgsql(connectionString));
 
-// 2. Identity Setup (Human Users)
+// 2. Identity Setup (Human Users) — SINGLE registration
 builder.Services.AddIdentity<ApplicationUser, IdentityRole>(options =>
 {
     options.Password.RequireDigit = true;
@@ -32,24 +37,27 @@ builder.Services.AddIdentity<ApplicationUser, IdentityRole>(options =>
 .AddEntityFrameworkStores<GatewayDbContext>()
 .AddDefaultTokenProviders();
 
-builder.Services.AddIdentity<ApplicationUser, IdentityRole>(options => { /* ... */ })
-    .AddEntityFrameworkStores<GatewayDbContext>()
-    .AddDefaultTokenProviders();
+// Custom claims factory to inject MerchantId into auth cookie
+builder.Services.AddScoped<IUserClaimsPrincipalFactory<ApplicationUser>, CustomUserClaimsPrincipalFactory>();
 
-builder.Services.AddScoped<IUserClaimsPrincipalFactory<ApplicationUser>, Gateway.Api.Identity.CustomUserClaimsPrincipalFactory>();
-
+// 3. Authorization Policies
 builder.Services.AddAuthorization(options =>
 {
     options.AddPolicy("SuperAdminOnly", policy => policy.RequireRole("SuperAdmin"));
-    options.AddPolicy("MerchantOwner", policy => policy.RequireRole("Owner", "SuperAdmin").AddRequirements(new Gateway.Api.Authorization.MerchantIdRequirement()));
-    options.AddPolicy("MerchantAdmin", policy => policy.RequireRole("Owner", "Admin", "SuperAdmin").AddRequirements(new Gateway.Api.Authorization.MerchantIdRequirement()));
-    options.AddPolicy("MerchantDeveloper", policy => policy.RequireRole("Owner", "Admin", "Developer", "SuperAdmin").AddRequirements(new Gateway.Api.Authorization.MerchantIdRequirement()));
-    options.AddPolicy("MerchantViewer", policy => policy.RequireRole("Owner", "Admin", "Developer", "Viewer", "SuperAdmin").AddRequirements(new Gateway.Api.Authorization.MerchantIdRequirement()));
+    options.AddPolicy("MerchantOwner", policy => policy.RequireRole("Owner", "SuperAdmin")
+        .AddRequirements(new Gateway.Api.Authorization.MerchantIdRequirement()));
+    options.AddPolicy("MerchantAdmin", policy => policy.RequireRole("Owner", "Admin", "SuperAdmin")
+        .AddRequirements(new Gateway.Api.Authorization.MerchantIdRequirement()));
+    options.AddPolicy("MerchantDeveloper", policy => policy.RequireRole("Owner", "Admin", "Developer", "SuperAdmin")
+        .AddRequirements(new Gateway.Api.Authorization.MerchantIdRequirement()));
+    options.AddPolicy("MerchantViewer", policy => policy.RequireRole("Owner", "Admin", "Developer", "Viewer", "SuperAdmin")
+        .AddRequirements(new Gateway.Api.Authorization.MerchantIdRequirement()));
 });
 
-builder.Services.AddSingleton<Microsoft.AspNetCore.Authorization.IAuthorizationHandler, Gateway.Api.Authorization.MerchantIdHandler>();
-builder.Services.AddHostedService<Gateway.Api.Bootstrap.SuperAdminBootstrapService>();
+builder.Services.AddSingleton<Microsoft.AspNetCore.Authorization.IAuthorizationHandler,
+    Gateway.Api.Authorization.MerchantIdHandler>();
 
+// 4. Cookie Configuration
 builder.Services.ConfigureApplicationCookie(options =>
 {
     options.Cookie.HttpOnly = true;
@@ -60,15 +68,16 @@ builder.Services.ConfigureApplicationCookie(options =>
     options.LoginPath = "/api/v1/auth/login";
 });
 
-// 3. Core Infrastructure Services
+// 5. Core Infrastructure Services
 builder.Services.AddSingleton<ISecretProtector, AesGcmSecretProtector>();
 
-// 4. Controllers & Swagger
+
+// 7. Controllers & Swagger
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
-// 5. Health Check
+// 8. Health Check
 builder.Services.AddHealthChecks()
     .AddAsyncCheck("Database", async (ct) =>
     {
@@ -90,15 +99,12 @@ builder.Services.AddHealthChecks()
 
 builder.Services.AddHttpClient<ITronSweepService, TronSweepService>();
 
+// 9. Hosted Services (Bootstrap runs AFTER migrations)
+builder.Services.AddHostedService<Gateway.Api.Bootstrap.SuperAdminBootstrapService>();
+
 var app = builder.Build();
 
-// ✅ FIX: Apply EF Core migrations at startup to ensure tables exist before HostedServices run
-using (var scope = app.Services.CreateScope())
-{
-    var dbContext = scope.ServiceProvider.GetRequiredService<GatewayDbContext>();
-    await dbContext.Database.MigrateAsync();
-}
-
+// ✅ SINGLE migration execution — runs BEFORE hosted services start
 using (var scope = app.Services.CreateScope())
 {
     var dbContext = scope.ServiceProvider.GetRequiredService<GatewayDbContext>();

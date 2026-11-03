@@ -59,10 +59,11 @@ public class Merchant
     {
         if (string.IsNullOrWhiteSpace(newName))
             throw new ArgumentException("Merchant name cannot be empty.", nameof(newName));
-    
-        if (newName.Length < 3 || newName.Length > 100)
+
+        var trimmed = newName.Trim();
+        if (trimmed.Length < 3 || trimmed.Length > 100)
             throw new ArgumentException("Merchant name must be between 3 and 100 characters.", nameof(newName));
 
-        Name = newName.Trim();
+        Name = trimmed;
     }
 }
