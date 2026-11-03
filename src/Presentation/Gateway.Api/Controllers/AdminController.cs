@@ -51,7 +51,6 @@ public class AdminController : ControllerBase
         if (!string.IsNullOrWhiteSpace(filter.Search))
         {
             var search = filter.Search.Trim();
-            // ✅ اصلاح: استفاده از ILike برای ترجمه صحیح به SQL در PostgreSQL
             query = query.Where(m => EF.Functions.ILike(m.Name, $"%{search}%"));
         }
 
@@ -64,6 +63,7 @@ public class AdminController : ControllerBase
 
         var items = await query
             .OrderByDescending(m => m.CreatedAtUtc)
+            .ThenByDescending(m => m.Id) // ✅ اصلاح: ترتیب‌دهی ثانویه برای پایداری
             .Skip((page - 1) * pageSize)
             .Take(pageSize)
             .Select(m => new MerchantSummaryDto
@@ -122,7 +122,7 @@ public class AdminController : ControllerBase
 
         return Ok(merchant);
     }
-    
+
     [HttpPost("merchants/{merchantId:guid}/activate")]
     public async Task<IActionResult> ActivateMerchant(Guid merchantId, CancellationToken ct)
     {

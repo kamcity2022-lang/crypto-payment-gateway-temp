@@ -148,6 +148,17 @@
     let currentPage = 1;
     let searchTimeout = null;
 
+    // ✅ XSS Protection: HTML escape helper
+    function escapeHtml(str) {
+        if (str === null || str === undefined) return '';
+        return String(str)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#039;');
+    }
+
     async function checkAuth() {
         try {
             const res = await fetch(`${API_BASE}/admin/overview`, { credentials: 'include' });
@@ -247,15 +258,16 @@
                         ? `<button class="btn btn-warning" onclick="deactivateMerchant('${m.merchantId}')">Deactivate</button>`
                         : `<button class="btn" onclick="activateMerchant('${m.merchantId}')">Activate</button>`;
 
+                    // ✅ XSS Protection: escape all dynamic values
                     tbody.innerHTML += `
 <tr>
-<td style="font-family: monospace;">${m.merchantId.substring(0, 8)}...</td>
-<td>${m.name}</td>
-<td class="${statusClass}">${statusText}</td>
-<td>${m.walletCount}</td>
-<td>${new Date(m.createdAtUtc).toLocaleDateString()}</td>
+<td style="font-family: monospace;">${escapeHtml(m.merchantId.substring(0, 8))}...</td>
+<td>${escapeHtml(m.name)}</td>
+<td class="${statusClass}">${escapeHtml(statusText)}</td>
+<td>${escapeHtml(m.walletCount)}</td>
+<td>${escapeHtml(new Date(m.createdAtUtc).toLocaleDateString())}</td>
 <td>
-<button class="btn btn-secondary" onclick="viewMerchantDetails('${m.merchantId}')">Details</button>
+<button class="btn btn-secondary" onclick="viewMerchantDetails('${escapeHtml(m.merchantId)}')">Details</button>
 ${actionBtn}
 </td>
 </tr>
@@ -351,32 +363,41 @@ ${actionBtn}
 
             const data = await res.json();
             const content = document.getElementById('merchantDetailsContent');
-            content.innerHTML = `
-<p><strong>Merchant ID:</strong> ${data.merchantId}</p>
-<p><strong>Name:</strong> ${data.name}</p>
-<p><strong>Status:</strong> <span class="${data.isActive ? 'status-active' : 'status-inactive'}">${data.isActive ? 'Active' : 'Inactive'}</span></p>
-<p><strong>Created At:</strong> ${new Date(data.createdAtUtc).toLocaleString()}</p>
-<p><strong>Default Webhook URL:</strong> ${data.defaultWebhookUrl || 'Not set'}</p>
-<p><strong>Wallet Count:</strong> ${data.walletCount}</p>
-<p><strong>Total Invoice Count:</strong> ${data.totalInvoiceCount}</p>
-<h4>Wallets</h4>
-${data.wallets.length > 0 ? `
+
+            // ✅ XSS Protection: escape all dynamic values
+            let walletsHtml = '';
+            if (data.wallets.length > 0) {
+                walletsHtml = `
 <table>
 <thead><tr><th>Wallet ID</th><th>Network</th><th>Addresses</th><th>Created</th></tr></thead>
 <tbody>
 ${data.wallets.map(w => `
 <tr>
-<td style="font-family: monospace;">${w.walletId.substring(0, 8)}...</td>
-<td>${w.network}</td>
-<td>${w.totalAddressesAllocated}</td>
-<td>${new Date(w.createdAtUtc).toLocaleDateString()}</td>
+<td style="font-family: monospace;">${escapeHtml(w.walletId.substring(0, 8))}...</td>
+<td>${escapeHtml(w.network)}</td>
+<td>${escapeHtml(w.totalAddressesAllocated)}</td>
+<td>${escapeHtml(new Date(w.createdAtUtc).toLocaleDateString())}</td>
 </tr>
 `).join('')}
 </tbody>
 </table>
-` : '<p style="color: #8b949e;">No wallets configured</p>'}
+`;
+            } else {
+                walletsHtml = '<p style="color: #8b949e;">No wallets configured</p>';
+            }
+
+            content.innerHTML = `
+<p><strong>Merchant ID:</strong> ${escapeHtml(data.merchantId)}</p>
+<p><strong>Name:</strong> ${escapeHtml(data.name)}</p>
+<p><strong>Status:</strong> <span class="${data.isActive ? 'status-active' : 'status-inactive'}">${escapeHtml(data.isActive ? 'Active' : 'Inactive')}</span></p>
+<p><strong>Created At:</strong> ${escapeHtml(new Date(data.createdAtUtc).toLocaleString())}</p>
+<p><strong>Default Webhook URL:</strong> ${escapeHtml(data.defaultWebhookUrl || 'Not set')}</p>
+<p><strong>Wallet Count:</strong> ${escapeHtml(data.walletCount)}</p>
+<p><strong>Total Invoice Count:</strong> ${escapeHtml(data.totalInvoiceCount)}</p>
+<h4>Wallets</h4>
+${walletsHtml}
 <div style="margin-top: 16px;">
-<button class="btn btn-secondary" onclick="generateInvite('${data.merchantId}')">Generate Invitation</button>
+<button class="btn btn-secondary" onclick="generateInvite('${escapeHtml(data.merchantId)}')">Generate Invitation</button>
 </div>
 <div id="inviteResult" class="hidden" style="margin-top: 16px;"></div>
 `;
@@ -390,7 +411,8 @@ ${data.wallets.map(w => `
 
     async function generateInvite(merchantId) {
         try {
-            const res = await fetch(`${API_BASE}/admin/merchants/${merchantId}/invite`, {
+            // ✅ FIX: Correct API endpoint URL
+            const res = await fetch(`${API_BASE}/auth/admin/merchants/${merchantId}/invite`, {
                 method: 'POST',
                 credentials: 'include'
             });
@@ -404,11 +426,13 @@ ${data.wallets.map(w => `
             const data = await res.json();
             const resultDiv = document.getElementById('inviteResult');
             resultDiv.classList.remove('hidden');
+
+            // ✅ XSS Protection: escape all dynamic values
             resultDiv.innerHTML = `
 <div class="warning">
 <strong>Invitation Token Generated:</strong><br>
-<div class="credentials-box">${data.inviteToken}</div>
-<p style="margin-top: 8px;">${data.message}</p>
+<div class="credentials-box">${escapeHtml(data.inviteToken)}</div>
+<p style="margin-top: 8px;">${escapeHtml(data.message)}</p>
 <p style="margin-top: 8px; color: #8b949e;">Provide this token to the user out-of-band.</p>
 </div>
 `;
@@ -469,14 +493,16 @@ ${data.wallets.map(w => `
             const data = await res.json();
             document.getElementById('createMerchantForm').classList.add('hidden');
             document.getElementById('createMerchantSuccess').classList.remove('hidden');
+
+            // ✅ XSS Protection: escape all dynamic values
             document.getElementById('merchantCredentials').innerHTML = `
-<p><strong>Merchant ID:</strong> ${data.merchantId}</p>
-<p><strong>Name:</strong> ${data.name}</p>
-<p><strong>API Key:</strong> ${data.apiKey}</p>
-<p><strong>API Secret:</strong> ${data.apiSecret}</p>
-<p><strong>Webhook Secret:</strong> ${data.webhookSecret}</p>
-<p><strong>TRON Account xPub:</strong> ${data.tronAccountXPub}</p>
-<p><strong>Created At:</strong> ${new Date(data.createdAtUtc).toLocaleString()}</p>
+<p><strong>Merchant ID:</strong> ${escapeHtml(data.merchantId)}</p>
+<p><strong>Name:</strong> ${escapeHtml(data.name)}</p>
+<p><strong>API Key:</strong> ${escapeHtml(data.apiKey)}</p>
+<p><strong>API Secret:</strong> ${escapeHtml(data.apiSecret)}</p>
+<p><strong>Webhook Secret:</strong> ${escapeHtml(data.webhookSecret)}</p>
+<p><strong>TRON Account xPub:</strong> ${escapeHtml(data.tronAccountXPub)}</p>
+<p><strong>Created At:</strong> ${escapeHtml(new Date(data.createdAtUtc).toLocaleString())}</p>
 `;
 
             loadOverview();
