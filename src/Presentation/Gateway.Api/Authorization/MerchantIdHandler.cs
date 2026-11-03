@@ -11,17 +11,15 @@ namespace Gateway.Api.Authorization;
 
 public class MerchantIdHandler : AuthorizationHandler<MerchantIdRequirement>
 {
-    // ✅ Nullable است تا تست‌های واحد بتوانند بدون دیتابیس واقعی اجرا شوند.
-    // در Production، DI همیشه یک نمونه معتبر تزریق می‌کند.
-    private readonly GatewayDbContext? _dbContext;
+    private readonly GatewayDbContext _dbContext;
 
-    public MerchantIdHandler(GatewayDbContext? dbContext = null)
+    // ✅ CRITICAL FIX: GatewayDbContext is now a required dependency.
+    public MerchantIdHandler(GatewayDbContext dbContext)
     {
-        _dbContext = dbContext;
+        _dbContext = dbContext ?? throw new ArgumentNullException(nameof(dbContext));
     }
 
-    protected override async Task HandleRequirementAsync(AuthorizationHandlerContext context,
-        MerchantIdRequirement requirement)
+    protected override async Task HandleRequirementAsync(AuthorizationHandlerContext context, MerchantIdRequirement requirement)
     {
         if (context.Resource is not HttpContext httpContext) return;
 
@@ -36,14 +34,12 @@ public class MerchantIdHandler : AuthorizationHandler<MerchantIdRequirement>
             userMerchantId = parsedGuid;
         }
 
-        if (userMerchantId == null && !isSuperAdmin)
-        {
-            return;
-        }
+        if (userMerchantId == null && !isSuperAdmin) return;
 
         var targetMerchantIdStr = httpContext.Request.RouteValues[requirement.RouteKey]?.ToString()
             ?? httpContext.Request.Query[requirement.RouteKey].FirstOrDefault();
 
+        // SuperAdmin behavior remains unchanged and independent of merchant status
         if (isSuperAdmin)
         {
             if (!string.IsNullOrEmpty(targetMerchantIdStr) && Guid.TryParse(targetMerchantIdStr, out var targetGuid))
@@ -58,17 +54,11 @@ public class MerchantIdHandler : AuthorizationHandler<MerchantIdRequirement>
             return;
         }
 
+        // ✅ CRITICAL FIX: Verify merchant is active from database before granting access
         if (string.IsNullOrEmpty(targetMerchantIdStr))
         {
-            // ✅ بررسی دیتابیس فقط در صورتی انجام می‌شود که DbContext تزریق شده باشد (Production)
-            if (_dbContext != null)
-            {
-                var merchant = await _dbContext.Merchants.AsNoTracking().FirstOrDefaultAsync(m => m.Id == userMerchantId);
-                if (merchant == null || !merchant.IsActive)
-                {
-                    return; // Fail authorization if merchant is inactive or not found
-                }
-            }
+            var merchant = await _dbContext.Merchants.AsNoTracking().FirstOrDefaultAsync(m => m.Id == userMerchantId);
+            if (merchant == null || !merchant.IsActive) return; // Fail authorization if inactive/not found
 
             httpContext.Items["ResolvedMerchantId"] = userMerchantId;
             context.Succeed(requirement);
@@ -77,14 +67,8 @@ public class MerchantIdHandler : AuthorizationHandler<MerchantIdRequirement>
 
         if (Guid.TryParse(targetMerchantIdStr, out var targetMerchantId) && userMerchantId == targetMerchantId)
         {
-            if (_dbContext != null)
-            {
-                var merchant = await _dbContext.Merchants.AsNoTracking().FirstOrDefaultAsync(m => m.Id == userMerchantId);
-                if (merchant == null || !merchant.IsActive)
-                {
-                    return; // Fail authorization if merchant is inactive or not found
-                }
-            }
+            var merchant = await _dbContext.Merchants.AsNoTracking().FirstOrDefaultAsync(m => m.Id == userMerchantId);
+            if (merchant == null || !merchant.IsActive) return; // Fail authorization if inactive/not found
 
             httpContext.Items["ResolvedMerchantId"] = userMerchantId;
             context.Succeed(requirement);
