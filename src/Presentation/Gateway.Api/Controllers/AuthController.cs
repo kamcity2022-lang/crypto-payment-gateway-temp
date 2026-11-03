@@ -21,17 +21,20 @@ public class AuthController : ControllerBase
     private readonly UserManager<ApplicationUser> _userManager;
     private readonly SignInManager<ApplicationUser> _signInManager;
     private readonly ILogger<AuthController> _logger;
+    private readonly IConfiguration _configuration;
 
     public AuthController(
         GatewayDbContext dbContext,
         UserManager<ApplicationUser> userManager,
         SignInManager<ApplicationUser> signInManager,
-        ILogger<AuthController> logger)
+        ILogger<AuthController> logger,
+        IConfiguration configuration)
     {
         _dbContext = dbContext;
         _userManager = userManager;
         _signInManager = signInManager;
         _logger = logger;
+        _configuration = configuration;
     }
 
     [HttpPost("activate")]
@@ -81,7 +84,8 @@ public class AuthController : ControllerBase
                 UserName = request.Email,
                 Email = request.Email,
                 MerchantId = tokenRecord.MerchantId,
-                EmailConfirmed = true
+                // ✅ فقط در محیط Development تایید ایمیل را دور می‌زند
+                EmailConfirmed = _configuration.GetValue<bool>("DevOptions:BypassEmailConfirmation", false) 
             };
 
             var createResult = await _userManager.CreateAsync(user, request.Password);

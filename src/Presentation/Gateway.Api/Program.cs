@@ -32,6 +32,10 @@ builder.Services.AddIdentity<ApplicationUser, IdentityRole>(options =>
 .AddEntityFrameworkStores<GatewayDbContext>()
 .AddDefaultTokenProviders();
 
+builder.Services.AddIdentity<ApplicationUser, IdentityRole>(options => { /* ... */ })
+    .AddEntityFrameworkStores<GatewayDbContext>()
+    .AddDefaultTokenProviders();
+
 builder.Services.AddScoped<IUserClaimsPrincipalFactory<ApplicationUser>, Gateway.Api.Identity.CustomUserClaimsPrincipalFactory>();
 
 builder.Services.AddAuthorization(options =>
@@ -89,6 +93,12 @@ builder.Services.AddHttpClient<ITronSweepService, TronSweepService>();
 var app = builder.Build();
 
 // ✅ FIX: Apply EF Core migrations at startup to ensure tables exist before HostedServices run
+using (var scope = app.Services.CreateScope())
+{
+    var dbContext = scope.ServiceProvider.GetRequiredService<GatewayDbContext>();
+    await dbContext.Database.MigrateAsync();
+}
+
 using (var scope = app.Services.CreateScope())
 {
     var dbContext = scope.ServiceProvider.GetRequiredService<GatewayDbContext>();

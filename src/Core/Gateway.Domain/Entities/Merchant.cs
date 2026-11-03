@@ -54,4 +54,15 @@ public class Merchant
 
         SettlementAddress = trimmed;
     }
+    
+    public void UpdateName(string newName)
+    {
+        if (string.IsNullOrWhiteSpace(newName))
+            throw new ArgumentException("Merchant name cannot be empty.", nameof(newName));
+    
+        if (newName.Length < 3 || newName.Length > 100)
+            throw new ArgumentException("Merchant name must be between 3 and 100 characters.", nameof(newName));
+
+        Name = newName.Trim();
+    }
 }

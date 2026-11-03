@@ -18,10 +18,9 @@ public class CustomUserClaimsPrincipalFactory : UserClaimsPrincipalFactory<Appli
 
     protected override async Task<ClaimsIdentity> GenerateClaimsAsync(ApplicationUser user)
     {
-        // تولید Claimهای پیش‌فرض (شامل Roleها و UserName)
         var identity = await base.GenerateClaimsAsync(user);
 
-        // ✅ FIX: اضافه کردن صریح MerchantId به Claimها برای استفاده در MerchantIdHandler
+        // ✅ تزریق MerchantId به کوکی احراز هویت برای استفاده در MerchantIdHandler
         if (user.MerchantId.HasValue)
         {
             identity.AddClaim(new Claim("MerchantId", user.MerchantId.Value.ToString()));

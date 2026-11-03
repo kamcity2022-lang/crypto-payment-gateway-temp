@@ -14,7 +14,7 @@ namespace Gateway.Api.Controllers;
 
 [ApiController]
 [Route("api/v1/dashboard")]
-[Authorize(Policy = "MerchantViewer")] // Viewer can read, Owner/Admin can edit
+[Authorize(Policy = "MerchantViewer")]
 public class DashboardController : ControllerBase
 {
     private readonly GatewayDbContext _dbContext;
@@ -27,8 +27,7 @@ public class DashboardController : ControllerBase
     private bool TryGetResolvedMerchantId(out Guid merchantId)
     {
         merchantId = Guid.Empty;
-        // ✅ STRICT: Only trust ResolvedMerchantId set by MerchantIdHandler (Human-User Identity path)
-        // Never fall back to HMAC MerchantId here.
+        // ✅ فقط ResolvedMerchantId مورد اعتماد است
         if (HttpContext.Items.TryGetValue("ResolvedMerchantId", out var resolved) && resolved is Guid id)
         {
             merchantId = id;
@@ -40,12 +39,8 @@ public class DashboardController : ControllerBase
     [HttpGet("overview")]
     public async Task<IActionResult> GetOverview(CancellationToken ct)
     {
-        if (!TryGetResolvedMerchantId(out var merchantId))
-        {
-            return Forbid(); // Blocks SuperAdmins without explicit merchant context
-        }
+        if (!TryGetResolvedMerchantId(out var merchantId)) return Forbid();
 
-        var now = DateTime.UtcNow;
         var overview = await _dbContext.Invoices
             .AsNoTracking()
             .Where(i => i.MerchantId == merchantId)
@@ -57,16 +52,7 @@ public class DashboardController : ControllerBase
                 PendingInvoices = g.Count(i => i.Status == InvoiceStatus.Pending || i.Status == InvoiceStatus.PartiallyPaid),
                 ExpiredOrFailedInvoices = g.Count(i => i.Status == InvoiceStatus.Expired || i.Status == InvoiceStatus.Cancelled || i.Status == InvoiceStatus.Underpaid),
                 TotalReceivedAmount = g.Sum(i => i.PaidAmountUnits) / 1_000_000m,
-                FiatCurrency = "USD",
-                RecentInvoices = g.OrderByDescending(i => i.CreatedAtUtc)
-                    .Take(5)
-                    .Select(i => new RecentInvoiceDto
-                    {
-                        Id = i.Id,
-                        FiatAmount = i.FiatAmount,
-                        Status = i.Status.ToString(),
-                        CreatedAtUtc = i.CreatedAtUtc
-                    }).ToList()
+                FiatCurrency = "USD"
             })
             .FirstOrDefaultAsync(ct);
 
@@ -76,10 +62,7 @@ public class DashboardController : ControllerBase
     [HttpGet("profile")]
     public async Task<IActionResult> GetProfile(CancellationToken ct)
     {
-        if (!TryGetResolvedMerchantId(out var merchantId))
-        {
-            return Forbid();
-        }
+        if (!TryGetResolvedMerchantId(out var merchantId)) return Forbid();
 
         var profile = await _dbContext.Merchants
             .AsNoTracking()
@@ -89,29 +72,25 @@ public class DashboardController : ControllerBase
                 MerchantId = m.Id,
                 Name = m.Name,
                 IsActive = m.IsActive,
-                CreatedAtUtc = m.CreatedAtUtc,
-                // Wallets are fetched separately or joined if needed, keeping it simple for MVP
+                CreatedAtUtc = m.CreatedAtUtc
             })
             .FirstOrDefaultAsync(ct);
 
         if (profile == null) return NotFound(new { error = "Merchant profile not found." });
-
         return Ok(profile);
     }
 
     [HttpPut("profile")]
-    [Authorize(Policy = "MerchantAdmin")] // Only Admin or Owner can update profile
+    [Authorize(Policy = "MerchantAdmin")]
     public async Task<IActionResult> UpdateProfile([FromBody] UpdateMerchantProfileRequest request, CancellationToken ct)
     {
-        if (!TryGetResolvedMerchantId(out var merchantId))
-        {
-            return Forbid();
-        }
+        if (!TryGetResolvedMerchantId(out var merchantId)) return Forbid();
 
         var merchant = await _dbContext.Merchants.FirstOrDefaultAsync(m => m.Id == merchantId, ct);
         if (merchant == null) return NotFound(new { error = "Merchant not found." });
 
-        merchant.GetType().GetProperty("Name")!.SetValue(merchant, request.Name.Trim());
+        // ✅ استفاده از متد Domain به جای Reflection
+        merchant.UpdateName(request.Name);
         
         if (!string.IsNullOrWhiteSpace(request.DefaultWebhookUrl))
         {
@@ -123,7 +102,6 @@ public class DashboardController : ControllerBase
         }
 
         await _dbContext.SaveChangesAsync(ct);
-
         return Ok(new { message = "Profile updated successfully." });
     }
 }
