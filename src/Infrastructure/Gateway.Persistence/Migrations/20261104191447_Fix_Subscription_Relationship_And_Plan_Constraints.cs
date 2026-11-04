@@ -1,12 +1,11 @@
-﻿using System;
-using Microsoft.EntityFrameworkCore.Migrations;
+﻿using Microsoft.EntityFrameworkCore.Migrations;
 
 #nullable disable
 
 namespace Gateway.Persistence.Migrations
 {
     /// <inheritdoc />
-    public partial class Add_Plans_Subscriptions_Constraints : Migration
+    public partial class Fix_Subscription_Relationship_And_Plan_Constraints : Migration
     {
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
@@ -38,30 +37,6 @@ namespace Gateway.Persistence.Migrations
                 oldType: "numeric",
                 oldNullable: true);
 
-            migrationBuilder.AddColumn<Guid>(
-                name: "MerchantId1",
-                table: "Subscriptions",
-                type: "uuid",
-                nullable: true);
-
-            migrationBuilder.AlterColumn<string>(
-                name: "Name",
-                table: "Plans",
-                type: "text",
-                nullable: false,
-                oldClrType: typeof(string),
-                oldType: "character varying(50)",
-                oldMaxLength: 50);
-
-            migrationBuilder.AlterColumn<string>(
-                name: "Description",
-                table: "Plans",
-                type: "text",
-                nullable: false,
-                oldClrType: typeof(string),
-                oldType: "character varying(255)",
-                oldMaxLength: 255);
-
             migrationBuilder.CreateIndex(
                 name: "IX_Subscriptions_MerchantId",
                 table: "Subscriptions",
@@ -70,47 +45,23 @@ namespace Gateway.Persistence.Migrations
                 filter: "\"Status\" = 1");
 
             migrationBuilder.CreateIndex(
-                name: "IX_Subscriptions_MerchantId1",
-                table: "Subscriptions",
-                column: "MerchantId1");
-
-            migrationBuilder.CreateIndex(
                 name: "IX_Plans_IsDefault",
                 table: "Plans",
                 column: "IsDefault",
                 unique: true,
                 filter: "\"IsDefault\" = true");
-
-            migrationBuilder.AddForeignKey(
-                name: "FK_Subscriptions_Merchants_MerchantId1",
-                table: "Subscriptions",
-                column: "MerchantId1",
-                principalTable: "Merchants",
-                principalColumn: "Id");
         }
 
         /// <inheritdoc />
         protected override void Down(MigrationBuilder migrationBuilder)
         {
-            migrationBuilder.DropForeignKey(
-                name: "FK_Subscriptions_Merchants_MerchantId1",
-                table: "Subscriptions");
-
             migrationBuilder.DropIndex(
                 name: "IX_Subscriptions_MerchantId",
                 table: "Subscriptions");
 
             migrationBuilder.DropIndex(
-                name: "IX_Subscriptions_MerchantId1",
-                table: "Subscriptions");
-
-            migrationBuilder.DropIndex(
                 name: "IX_Plans_IsDefault",
                 table: "Plans");
-
-            migrationBuilder.DropColumn(
-                name: "MerchantId1",
-                table: "Subscriptions");
 
             migrationBuilder.AlterColumn<decimal>(
                 name: "CustomVolumeLimitUsd",
@@ -122,24 +73,6 @@ namespace Gateway.Persistence.Migrations
                 oldPrecision: 18,
                 oldScale: 2,
                 oldNullable: true);
-
-            migrationBuilder.AlterColumn<string>(
-                name: "Name",
-                table: "Plans",
-                type: "character varying(50)",
-                maxLength: 50,
-                nullable: false,
-                oldClrType: typeof(string),
-                oldType: "text");
-
-            migrationBuilder.AlterColumn<string>(
-                name: "Description",
-                table: "Plans",
-                type: "character varying(255)",
-                maxLength: 255,
-                nullable: false,
-                oldClrType: typeof(string),
-                oldType: "text");
 
             migrationBuilder.CreateIndex(
                 name: "IX_Subscriptions_MerchantId",

@@ -502,7 +502,8 @@ namespace Gateway.Persistence.Migrations
 
                     b.Property<string>("Description")
                         .IsRequired()
-                        .HasColumnType("text");
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)");
 
                     b.Property<bool>("IsActive")
                         .HasColumnType("boolean");
@@ -519,7 +520,8 @@ namespace Gateway.Persistence.Migrations
 
                     b.Property<string>("Name")
                         .IsRequired()
-                        .HasColumnType("text");
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
 
                     b.Property<decimal>("PriceUsd")
                         .HasPrecision(18, 2)
@@ -566,9 +568,6 @@ namespace Gateway.Persistence.Migrations
                     b.Property<Guid>("MerchantId")
                         .HasColumnType("uuid");
 
-                    b.Property<Guid?>("MerchantId1")
-                        .HasColumnType("uuid");
-
                     b.Property<Guid>("PlanId")
                         .HasColumnType("uuid");
 
@@ -580,8 +579,6 @@ namespace Gateway.Persistence.Migrations
                     b.HasIndex("MerchantId")
                         .IsUnique()
                         .HasFilter("\"Status\" = 1");
-
-                    b.HasIndex("MerchantId1");
 
                     b.HasIndex("PlanId");
 
@@ -836,14 +833,10 @@ namespace Gateway.Persistence.Migrations
             modelBuilder.Entity("Gateway.Domain.Entities.Subscription", b =>
                 {
                     b.HasOne("Gateway.Domain.Entities.Merchant", "Merchant")
-                        .WithMany()
+                        .WithMany("Subscriptions")
                         .HasForeignKey("MerchantId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
-
-                    b.HasOne("Gateway.Domain.Entities.Merchant", null)
-                        .WithMany("Subscriptions")
-                        .HasForeignKey("MerchantId1");
 
                     b.HasOne("Gateway.Domain.Entities.Plan", "Plan")
                         .WithMany()

@@ -113,14 +113,15 @@ public class GatewayDbContext : IdentityDbContext<ApplicationUser>
         modelBuilder.Entity<Plan>(b =>
         {
             b.HasKey(p => p.Id);
+            b.Property(p => p.Name).IsRequired().HasMaxLength(50);
+            b.Property(p => p.Description).HasMaxLength(255);
             b.Property(p => p.MonthlyVolumeLimitUsd).HasPrecision(18, 2);
             b.Property(p => p.PriceUsd).HasPrecision(18, 2);
-            b.HasIndex(p => p.IsDefault);
             
             // Partial index: only one default plan allowed
             b.HasIndex(p => p.IsDefault)
-             .IsUnique()
-             .HasFilter("\"IsDefault\" = true");
+                .IsUnique()
+                .HasFilter("\"IsDefault\" = true");
         });
 
         // Subscription configuration
@@ -130,20 +131,21 @@ public class GatewayDbContext : IdentityDbContext<ApplicationUser>
             b.Property(s => s.CurrentPeriodVolumeUsd).HasPrecision(18, 2);
             b.Property(s => s.CustomVolumeLimitUsd).HasPrecision(18, 2);
             
+            // ✅ FIX: Explicitly link to Merchant.Subscriptions to prevent MerchantId1 shadow FK
             b.HasOne(s => s.Merchant)
-             .WithMany()
-             .HasForeignKey(s => s.MerchantId)
-             .OnDelete(DeleteBehavior.Cascade);
+                .WithMany(m => m.Subscriptions)
+                .HasForeignKey(s => s.MerchantId)
+                .OnDelete(DeleteBehavior.Cascade);
 
             b.HasOne(s => s.Plan)
-             .WithMany()
-             .HasForeignKey(s => s.PlanId)
-             .OnDelete(DeleteBehavior.Restrict);
+                .WithMany()
+                .HasForeignKey(s => s.PlanId)
+                .OnDelete(DeleteBehavior.Restrict);
 
             // Partial index: only one active subscription per merchant
             b.HasIndex(s => s.MerchantId)
-             .IsUnique()
-             .HasFilter("\"Status\" = 1"); // SubscriptionStatus.Active = 1
+                .IsUnique()
+                .HasFilter("\"Status\" = 1"); // SubscriptionStatus.Active = 1
         });
     }
 }

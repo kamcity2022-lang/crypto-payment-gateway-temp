@@ -150,4 +150,59 @@ public class SubscriptionConstraintTests : IAsyncLifetime
         // ✅ FIX: استفاده از customPlan.Id به جای customPlanId
         sub.PlanId.Should().Be(customPlan.Id, "Existing subscription should be preserved");
     }
+    
+        [Fact]
+    public void EfCoreModel_ShouldNotContainMerchantId1ShadowProperty()
+    {
+        var entityType = _dbContext.Model.FindEntityType(typeof(Subscription));
+        var properties = entityType!.GetProperties().Select(p => p.Name).ToList();
+        
+        properties.Should().NotContain("MerchantId1", "Shadow property MerchantId1 must not exist");
+        properties.Should().Contain("MerchantId", "Explicit MerchantId must exist");
+    }
+
+    [Fact]
+    public void EfCoreModel_SubscriptionMerchantId_ShouldReferenceMerchantsId()
+    {
+        var entityType = _dbContext.Model.FindEntityType(typeof(Subscription));
+        var fk = entityType!.GetForeignKeys().First(f => f.Properties.Any(p => p.Name == "MerchantId"));
+        
+        fk.PrincipalEntityType.ClrType.Should().Be(typeof(Merchant));
+        fk.PrincipalKey.Properties.First().Name.Should().Be("Id");
+    }
+
+    [Fact]
+    public async Task BootstrapSubscriptionAssignment_ShouldWorkCorrectly()
+    {
+        // Arrange: Create a merchant without a subscription
+        var merchantId = Guid.NewGuid();
+        var merchant = new Merchant(merchantId, "Test Merchant", "hash_bootstrap", "sec_bootstrap", "whsec_bootstrap");
+        _dbContext.Merchants.Add(merchant);
+        await _dbContext.SaveChangesAsync();
+
+        var defaultPlan = new Plan("Starter", "desc", 100, 5000m, 0m, isDefault: true);
+        _dbContext.Plans.Add(defaultPlan);
+        await _dbContext.SaveChangesAsync();
+
+        // Act: Execute the exact query logic used in SuperAdminBootstrapService
+        var merchantsWithoutSubscription = await _dbContext.Merchants
+            .Where(m => !_dbContext.Subscriptions.Any(s => 
+                s.MerchantId == m.Id && s.Status == SubscriptionStatus.Active))
+            .Select(m => m.Id)
+            .ToListAsync();
+
+        foreach (var mid in merchantsWithoutSubscription)
+        {
+            _dbContext.Subscriptions.Add(new Subscription(mid, defaultPlan.Id));
+        }
+        await _dbContext.SaveChangesAsync();
+
+        // Assert
+        var subscription = await _dbContext.Subscriptions.FirstOrDefaultAsync(s => s.MerchantId == merchantId);
+        subscription.Should().NotBeNull();
+        subscription!.PlanId.Should().Be(defaultPlan.Id);
+        subscription.Status.Should().Be(SubscriptionStatus.Active);
+        subscription.MerchantId.Should().Be(merchantId);
+    }
+    
 }

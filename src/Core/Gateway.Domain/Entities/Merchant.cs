@@ -20,6 +20,7 @@ public class Merchant
     
     private readonly List<Subscription> _subscriptions = new();
     public IReadOnlyCollection<Subscription> Subscriptions => _subscriptions.AsReadOnly();
+    
 
     public void AddSubscription(Subscription subscription)
     {
