@@ -1,0 +1,65 @@
+﻿using System;
+using Gateway.Domain.Enums;
+
+namespace Gateway.Domain.Entities;
+
+public class Subscription
+{
+    public Guid Id { get; private set; }
+    public Guid MerchantId { get; private set; }
+    public Guid PlanId { get; private set; }
+    public SubscriptionStatus Status { get; private set; }
+    public DateTime CurrentPeriodStartUtc { get; private set; }
+    public DateTime CurrentPeriodEndUtc { get; private set; }
+    public int CurrentPeriodInvoiceCount { get; private set; }
+    public decimal CurrentPeriodVolumeUsd { get; private set; }
+    
+    // Optional custom limits for enterprise overrides (SuperAdmin)
+    public int? CustomInvoiceLimit { get; private set; }
+    public decimal? CustomVolumeLimitUsd { get; private set; }
+
+    public DateTime CreatedAtUtc { get; private set; }
+
+    // ✅ اضافه کردن Navigation Properties
+    public virtual Merchant Merchant { get; private set; } = null!;
+    public virtual Plan Plan { get; private set; } = null!;
+
+    private Subscription() { } // Required for ORM
+
+    public Subscription(Guid merchantId, Guid planId)
+    {
+        Id = Guid.NewGuid();
+        MerchantId = merchantId;
+        PlanId = planId;
+        Status = SubscriptionStatus.Active;
+        CurrentPeriodStartUtc = DateTime.UtcNow;
+        CurrentPeriodEndUtc = DateTime.UtcNow.AddMonths(1);
+        CurrentPeriodInvoiceCount = 0;
+        CurrentPeriodVolumeUsd = 0m;
+        CreatedAtUtc = DateTime.UtcNow;
+    }
+
+    public void ResetPeriodIfExpired()
+    {
+        var now = DateTime.UtcNow;
+        if (now >= CurrentPeriodEndUtc)
+        {
+            CurrentPeriodStartUtc = CurrentPeriodEndUtc;
+            CurrentPeriodEndUtc = CurrentPeriodStartUtc.AddMonths(1);
+            CurrentPeriodInvoiceCount = 0;
+            CurrentPeriodVolumeUsd = 0m;
+        }
+    }
+
+    public void RecordUsage(int invoiceCountIncrement, decimal volumeIncrementUsd)
+    {
+        CurrentPeriodInvoiceCount += invoiceCountIncrement;
+        CurrentPeriodVolumeUsd += volumeIncrementUsd;
+    }
+
+    public void OverrideLimits(int? customInvoiceLimit, decimal? customVolumeLimitUsd)
+    {
+        CustomInvoiceLimit = customInvoiceLimit;
+        CustomVolumeLimitUsd = customVolumeLimitUsd;
+    }
+}

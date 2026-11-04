@@ -84,8 +84,16 @@ public class MerchantsController : ControllerBase
         _dbContext.Merchants.Add(merchant);
         _dbContext.Wallets.Add(wallet);
 
-        await _dbContext.SaveChangesAsync(ct);
+        // Assign Default Subscription
+        var defaultPlan = await _dbContext.Plans.FirstOrDefaultAsync(p => p.IsDefault && p.IsActive, ct);
+        if (defaultPlan == null)
+        {
+            return StatusCode(500, new { error = "System misconfiguration: No default active plan found." });
+        }
+        var subscription = new Subscription(merchant.Id, defaultPlan.Id);
+        _dbContext.Subscriptions.Add(subscription);
         
+        await _dbContext.SaveChangesAsync(ct);
         
 
         return CreatedAtAction(nameof(GetProfile), new { }, new RegisterMerchantResponse

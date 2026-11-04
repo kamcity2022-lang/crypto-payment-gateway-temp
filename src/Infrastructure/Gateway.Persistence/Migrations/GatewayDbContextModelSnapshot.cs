@@ -491,6 +491,99 @@ namespace Gateway.Persistence.Migrations
                     b.ToTable("PaymentTransfers");
                 });
 
+            modelBuilder.Entity("Gateway.Domain.Entities.Plan", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Description")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("boolean");
+
+                    b.Property<bool>("IsDefault")
+                        .HasColumnType("boolean");
+
+                    b.Property<int>("MonthlyInvoiceLimit")
+                        .HasColumnType("integer");
+
+                    b.Property<decimal>("MonthlyVolumeLimitUsd")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<decimal>("PriceUsd")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("IsActive");
+
+                    b.HasIndex("IsDefault");
+
+                    b.ToTable("Plans");
+                });
+
+            modelBuilder.Entity("Gateway.Domain.Entities.Subscription", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("CurrentPeriodEndUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("CurrentPeriodInvoiceCount")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime>("CurrentPeriodStartUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<decimal>("CurrentPeriodVolumeUsd")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<int?>("CustomInvoiceLimit")
+                        .HasColumnType("integer");
+
+                    b.Property<decimal?>("CustomVolumeLimitUsd")
+                        .HasColumnType("numeric");
+
+                    b.Property<Guid>("MerchantId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("PlanId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("Status")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("MerchantId");
+
+                    b.HasIndex("PlanId");
+
+                    b.HasIndex("MerchantId", "Status");
+
+                    b.ToTable("Subscriptions");
+                });
+
             modelBuilder.Entity("Gateway.Domain.Entities.SweepTask", b =>
                 {
                     b.Property<Guid>("Id")
@@ -736,6 +829,25 @@ namespace Gateway.Persistence.Migrations
                         .IsRequired();
                 });
 
+            modelBuilder.Entity("Gateway.Domain.Entities.Subscription", b =>
+                {
+                    b.HasOne("Gateway.Domain.Entities.Merchant", "Merchant")
+                        .WithMany("Subscriptions")
+                        .HasForeignKey("MerchantId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Gateway.Domain.Entities.Plan", "Plan")
+                        .WithMany()
+                        .HasForeignKey("PlanId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Merchant");
+
+                    b.Navigation("Plan");
+                });
+
             modelBuilder.Entity("Microsoft.AspNetCore.Identity.IdentityRoleClaim<string>", b =>
                 {
                     b.HasOne("Microsoft.AspNetCore.Identity.IdentityRole", null)
@@ -790,6 +902,11 @@ namespace Gateway.Persistence.Migrations
             modelBuilder.Entity("Gateway.Domain.Entities.Invoice", b =>
                 {
                     b.Navigation("Transfers");
+                });
+
+            modelBuilder.Entity("Gateway.Domain.Entities.Merchant", b =>
+                {
+                    b.Navigation("Subscriptions");
                 });
 
             modelBuilder.Entity("Gateway.Domain.Entities.Wallet", b =>

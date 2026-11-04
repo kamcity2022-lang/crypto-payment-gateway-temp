@@ -3,6 +3,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Gateway.Domain.Entities;
+using Gateway.Persistence;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
@@ -48,6 +49,22 @@ public class SuperAdminBootstrapService : IHostedService
                     return; // Stop execution to prevent partial state
                 }
             }
+        }
+        
+        // STEP 1.5: Ensure Default Plan Exists
+        var dbContext = scope.ServiceProvider.GetRequiredService<GatewayDbContext>();
+        if (!await dbContext.Plans.AnyAsync(p => p.IsDefault, cancellationToken))
+        {
+            var starterPlan = new Plan(
+                name: "Starter", 
+                description: "Default Free/Starter Tier", 
+                monthlyInvoiceLimit: 100, 
+                monthlyVolumeLimitUsd: 5000m, 
+                priceUsd: 0m, 
+                isDefault: true);
+            dbContext.Plans.Add(starterPlan);
+            await dbContext.SaveChangesAsync(cancellationToken);
+            _logger.LogInformation("Bootstrap: Default 'Starter' plan created.");
         }
 
         // STEP 2: Check if a SuperAdmin already exists.

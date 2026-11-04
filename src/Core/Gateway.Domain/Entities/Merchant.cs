@@ -1,4 +1,5 @@
 ﻿using System;
+using Gateway.Domain.Enums;
 
 namespace Gateway.Domain.Entities;
 
@@ -16,6 +17,20 @@ public class Merchant
     private Merchant() { } // Required for ORM
 
     public string? DefaultWebhookUrl { get; private set; }
+    
+    private readonly List<Subscription> _subscriptions = new();
+    public IReadOnlyCollection<Subscription> Subscriptions => _subscriptions.AsReadOnly();
+
+    public void AddSubscription(Subscription subscription)
+    {
+        if (subscription == null) throw new ArgumentNullException(nameof(subscription));
+        _subscriptions.Add(subscription);
+    }
+
+    public Subscription? GetActiveSubscription()
+    {
+        return _subscriptions.FirstOrDefault(s => s.Status == SubscriptionStatus.Active);
+    }
 
     public void SetDefaultWebhookUrl(string webhookUrl)
     {

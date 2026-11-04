@@ -20,6 +20,9 @@ public class GatewayDbContext : IdentityDbContext<ApplicationUser>
     public DbSet<SweepTask> SweepTasks => Set<SweepTask>();
     public DbSet<MerchantIdempotencyKey> MerchantIdempotencyKeys => Set<MerchantIdempotencyKey>();
     public DbSet<MerchantClaimToken> MerchantClaimTokens => Set<MerchantClaimToken>();
+    public DbSet<Plan> Plans => Set<Plan>();
+    public DbSet<Subscription> Subscriptions => Set<Subscription>();
+
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -98,6 +101,37 @@ public class GatewayDbContext : IdentityDbContext<ApplicationUser>
             b.HasKey(k => k.Id);
             b.HasIndex(k => new { k.MerchantId, k.Key }).IsUnique();
             b.HasIndex(k => k.ExpiresAtUtc);
+        });
+        
+        // 2. تنظیمات Plan
+        modelBuilder.Entity<Plan>(b =>
+        {
+            b.HasKey(p => p.Id);
+            b.Property(p => p.Name).HasMaxLength(50).IsRequired();
+            b.Property(p => p.Description).HasMaxLength(255);
+            b.Property(p => p.MonthlyVolumeLimitUsd).HasPrecision(18, 2); // decimal(18,2)
+            b.Property(p => p.PriceUsd).HasPrecision(18, 2); // decimal(18,2)
+            b.HasIndex(p => p.IsActive);
+            b.HasIndex(p => p.IsDefault);
+        });
+
+        // 3. تنظیمات Subscription
+        modelBuilder.Entity<Subscription>(b =>
+        {
+            b.HasKey(s => s.Id);
+            b.HasIndex(s => s.MerchantId);
+            b.HasIndex(s => new { s.MerchantId, s.Status }); // برای جستجوی سریع اشتراک فعال مرچنت
+            b.Property(s => s.CurrentPeriodVolumeUsd).HasPrecision(18, 2); // decimal(18,2)
+            
+            b.HasOne(s => s.Merchant)
+                .WithMany(m => m.Subscriptions)
+                .HasForeignKey(s => s.MerchantId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            b.HasOne(s => s.Plan)
+                .WithMany()
+                .HasForeignKey(s => s.PlanId)
+                .OnDelete(DeleteBehavior.Restrict); // جلوگیری از حذف پلنی که اشتراک دارد
         });
     }
 }
