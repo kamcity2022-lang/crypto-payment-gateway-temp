@@ -502,8 +502,7 @@ namespace Gateway.Persistence.Migrations
 
                     b.Property<string>("Description")
                         .IsRequired()
-                        .HasMaxLength(255)
-                        .HasColumnType("character varying(255)");
+                        .HasColumnType("text");
 
                     b.Property<bool>("IsActive")
                         .HasColumnType("boolean");
@@ -520,8 +519,7 @@ namespace Gateway.Persistence.Migrations
 
                     b.Property<string>("Name")
                         .IsRequired()
-                        .HasMaxLength(50)
-                        .HasColumnType("character varying(50)");
+                        .HasColumnType("text");
 
                     b.Property<decimal>("PriceUsd")
                         .HasPrecision(18, 2)
@@ -529,9 +527,9 @@ namespace Gateway.Persistence.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("IsActive");
-
-                    b.HasIndex("IsDefault");
+                    b.HasIndex("IsDefault")
+                        .IsUnique()
+                        .HasFilter("\"IsDefault\" = true");
 
                     b.ToTable("Plans");
                 });
@@ -562,9 +560,13 @@ namespace Gateway.Persistence.Migrations
                         .HasColumnType("integer");
 
                     b.Property<decimal?>("CustomVolumeLimitUsd")
-                        .HasColumnType("numeric");
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
 
                     b.Property<Guid>("MerchantId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("MerchantId1")
                         .HasColumnType("uuid");
 
                     b.Property<Guid>("PlanId")
@@ -575,11 +577,13 @@ namespace Gateway.Persistence.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("MerchantId");
+                    b.HasIndex("MerchantId")
+                        .IsUnique()
+                        .HasFilter("\"Status\" = 1");
+
+                    b.HasIndex("MerchantId1");
 
                     b.HasIndex("PlanId");
-
-                    b.HasIndex("MerchantId", "Status");
 
                     b.ToTable("Subscriptions");
                 });
@@ -832,10 +836,14 @@ namespace Gateway.Persistence.Migrations
             modelBuilder.Entity("Gateway.Domain.Entities.Subscription", b =>
                 {
                     b.HasOne("Gateway.Domain.Entities.Merchant", "Merchant")
-                        .WithMany("Subscriptions")
+                        .WithMany()
                         .HasForeignKey("MerchantId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
+
+                    b.HasOne("Gateway.Domain.Entities.Merchant", null)
+                        .WithMany("Subscriptions")
+                        .HasForeignKey("MerchantId1");
 
                     b.HasOne("Gateway.Domain.Entities.Plan", "Plan")
                         .WithMany()

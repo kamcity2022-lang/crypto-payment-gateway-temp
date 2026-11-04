@@ -14,10 +14,12 @@ public class Plan
     public bool IsDefault { get; private set; }
     public DateTime CreatedAtUtc { get; private set; }
 
-    private Plan() { } // Required for ORM
+    private Plan() { }
 
     public Plan(string name, string description, int monthlyInvoiceLimit, decimal monthlyVolumeLimitUsd, decimal priceUsd, bool isDefault = false)
     {
+        if (string.IsNullOrWhiteSpace(name))
+            throw new ArgumentException("Plan name cannot be null, empty, or whitespace.", nameof(name));
         if (monthlyInvoiceLimit <= 0)
             throw new ArgumentOutOfRangeException(nameof(monthlyInvoiceLimit), "Monthly invoice limit must be greater than zero.");
         if (monthlyVolumeLimitUsd < 0)
@@ -38,6 +40,8 @@ public class Plan
 
     public void Update(string name, string description, int monthlyInvoiceLimit, decimal monthlyVolumeLimitUsd, decimal priceUsd)
     {
+        if (string.IsNullOrWhiteSpace(name))
+            throw new ArgumentException("Plan name cannot be null, empty, or whitespace.", nameof(name));
         if (monthlyInvoiceLimit <= 0) throw new ArgumentOutOfRangeException(nameof(monthlyInvoiceLimit));
         if (monthlyVolumeLimitUsd < 0) throw new ArgumentOutOfRangeException(nameof(monthlyVolumeLimitUsd));
         if (priceUsd < 0) throw new ArgumentOutOfRangeException(nameof(priceUsd));
