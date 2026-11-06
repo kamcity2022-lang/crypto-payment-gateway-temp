@@ -209,8 +209,13 @@ public class TronScannerService : ITronScannerService
                 }
                 else
                 {
+                    var previousStatus = invoice.Status;
                     existingTransfer.UpdateConfirmations(solidifiedBlockNumber, 1);
                     invoice.EvaluateStatus();
+                    if (previousStatus != invoice.Status)
+                    {
+                        await QueueInvoiceStatusWebhookAsync(invoice, txHash, ct);
+                    }
                     _dbContext.Entry(invoice).State = EntityState.Modified;
                 }
 

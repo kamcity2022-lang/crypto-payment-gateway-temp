@@ -9,6 +9,9 @@ using System.Threading;
 using System.Threading.Tasks;
 using FluentAssertions;
 using Gateway.Blockchain.Tron;
+using Gateway.Api.Controllers;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc;
 using Gateway.Domain.Entities;
 using Gateway.Domain.Enums;
 using Gateway.Infrastructure.Security;
@@ -378,6 +381,153 @@ public class EndToEndPaymentFlowTests : IAsyncLifetime
 
         var ui = await _dbContext.Invoices.AsNoTracking().FirstAsync(i => i.Id == inv.Id);
         ui.Status.Should().Be(InvoiceStatus.Paid);
+    }
+
+
+    [Fact]
+    public async Task Checkout_ReadDoesNotPersistExpirationWithoutOutbox()
+    {
+        var (merchant, wallet) = CreateMerchantAndWallet();
+        var invoice = CreateInvoice(merchant, wallet, val: TimeSpan.FromSeconds(-10));
+        await _dbContext.SaveChangesAsync();
+
+        var controller = new CheckoutController(_dbContext)
+        {
+            ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() }
+        };
+
+        var result = await controller.GetCheckoutStatus(invoice.CheckoutToken, CancellationToken.None);
+        var ok = result.Should().BeOfType<OkObjectResult>().Subject;
+        var displayed = ok.Value.Should().BeOfType<Gateway.Application.DTOs.CheckoutStatusDto>().Subject;
+        displayed.Status.Should().Be("Expired");
+
+        // Only the scanner can persist a status transition along with a
+        // durable, signed Outbox event.
+        _dbContext.ChangeTracker.Clear();
+        var unchanged = await _dbContext.Invoices.AsNoTracking().SingleAsync(i => i.Id == invoice.Id);
+        unchanged.Status.Should().Be(InvoiceStatus.Pending);
+        (await _dbContext.OutboxEvents.CountAsync(o => o.AggregateId == invoice.Id))
+            .Should().Be(0);
+    }
+
+    [Fact]
+    public async Task Scanner_ExpirationPersistsWithExactlyOneWebhook()
+    {
+        var (merchant, wallet) = CreateMerchantAndWallet();
+        var invoice = CreateInvoice(merchant, wallet, val: TimeSpan.FromSeconds(-10));
+        await _dbContext.SaveChangesAsync();
+
+        var mock = new TronGridMockHttpHandler(100_000_000UL);
+        using var client = new HttpClient(mock);
+        var cfg = new ConfigurationBuilder().AddInMemoryCollection(new[]
+        {
+            new KeyValuePair<string, string?>("Tron:UsdtContractAddress", UsdtContract)
+        }).Build();
+        var scanner = new TronScannerService(
+            _dbContext, client, cfg, NullLogger<TronScannerService>.Instance);
+
+        await scanner.ScanPendingDepositsAsync(CancellationToken.None);
+        (await _dbContext.Invoices.AsNoTracking().SingleAsync(i => i.Id == invoice.Id))
+            .Status.Should().Be(InvoiceStatus.Expired);
+        var events = await _dbContext.OutboxEvents.AsNoTracking()
+            .Where(o => o.AggregateId == invoice.Id).ToListAsync();
+        events.Should().ContainSingle(e => e.EventType == "invoice.expired");
+
+        // An idempotent rescan must not emit a duplicate expiration event.
+        await scanner.ScanPendingDepositsAsync(CancellationToken.None);
+        (await _dbContext.OutboxEvents.AsNoTracking()
+            .CountAsync(o => o.AggregateId == invoice.Id)).Should().Be(1);
+    }
+
+    [Fact]
+    public async Task Scanner_ExistingPartialPaymentBecomesUnderpaidWithWebhook()
+    {
+        var (merchant, wallet) = CreateMerchantAndWallet();
+        var invoice = CreateInvoice(merchant, wallet);
+        await _dbContext.SaveChangesAsync();
+
+        const string tx = "partial-then-underpaid";
+        var mock = new TronGridMockHttpHandler(100_000_000UL);
+        const long amount = 5_000_000L;
+        mock.AddAccountResponse(ValidDepositAddress, BuildAccountResp(tx, 0, amount, 1700000000L));
+        mock.AddTransactionResponse(tx, BuildReceiptResp(
+            99_999_900UL, THex(UsdtContract), THex(ValidDepositAddress),
+            amount.ToString("x"), 0));
+
+        using var client = new HttpClient(mock);
+        var cfg = new ConfigurationBuilder().AddInMemoryCollection(new[]
+        {
+            new KeyValuePair<string, string?>("Tron:UsdtContractAddress", UsdtContract)
+        }).Build();
+        var scanner = new TronScannerService(
+            _dbContext, client, cfg, NullLogger<TronScannerService>.Instance);
+        await scanner.ScanPendingDepositsAsync(CancellationToken.None);
+
+        (await _dbContext.Invoices.AsNoTracking().SingleAsync(i => i.Id == invoice.Id))
+            .Status.Should().Be(InvoiceStatus.PartiallyPaid);
+
+        await _dbContext.Database.ExecuteSqlInterpolatedAsync(
+            $"UPDATE \"Invoices\" SET \"ExpiresAtUtc\" = {DateTime.UtcNow.AddSeconds(-10)} WHERE \"Id\" = {invoice.Id}");
+        _dbContext.ChangeTracker.Clear();
+
+        await scanner.ScanPendingDepositsAsync(CancellationToken.None);
+        (await _dbContext.Invoices.AsNoTracking().SingleAsync(i => i.Id == invoice.Id))
+            .Status.Should().Be(InvoiceStatus.Underpaid);
+        var statuses = await _dbContext.OutboxEvents.AsNoTracking()
+            .Where(o => o.AggregateId == invoice.Id)
+            .Select(o => o.EventType).ToListAsync();
+        statuses.Should().ContainSingle(x => x == "invoice.partiallypaid");
+        statuses.Should().ContainSingle(x => x == "invoice.underpaid");
+    }
+
+    [Fact]
+    public async Task Scanner_OverpaidInvoiceContinuesScanningForFurtherTransfers()
+    {
+        var (merchant, wallet) = CreateMerchantAndWallet();
+        var invoice = CreateInvoice(merchant, wallet);
+        await _dbContext.SaveChangesAsync();
+
+        const string first = "overpay-first";
+        const string second = "overpay-second";
+        const long firstAmount = 11_000_000L;
+        const long secondAmount = 2_000_000L;
+        var mock = new TronGridMockHttpHandler(100_000_000UL);
+        mock.AddAccountResponse(ValidDepositAddress,
+            BuildAccountResp(first, 0, firstAmount, 1700000000L));
+        mock.AddTransactionResponse(first, BuildReceiptResp(
+            99_999_900UL, THex(UsdtContract), THex(ValidDepositAddress),
+            firstAmount.ToString("x"), 0));
+
+        using var client = new HttpClient(mock);
+        var cfg = new ConfigurationBuilder().AddInMemoryCollection(new[]
+        {
+            new KeyValuePair<string, string?>("Tron:UsdtContractAddress", UsdtContract)
+        }).Build();
+        var scanner = new TronScannerService(
+            _dbContext, client, cfg, NullLogger<TronScannerService>.Instance);
+        await scanner.ScanPendingDepositsAsync(CancellationToken.None);
+
+        mock.AddAccountResponse(ValidDepositAddress, JsonSerializer.Serialize(new
+        {
+            data = new[]
+            {
+                new { transaction_id = first, to = ValidDepositAddress, from = "T",
+                    value = firstAmount.ToString(), event_index = 0, block_timestamp = 1700000000L },
+                new { transaction_id = second, to = ValidDepositAddress, from = "T",
+                    value = secondAmount.ToString(), event_index = 0, block_timestamp = 1700000100L }
+            }
+        }));
+        mock.AddTransactionResponse(second, BuildReceiptResp(
+            99_999_901UL, THex(UsdtContract), THex(ValidDepositAddress),
+            secondAmount.ToString("x"), 0));
+
+        await scanner.ScanPendingDepositsAsync(CancellationToken.None);
+        var persisted = await _dbContext.Invoices.AsNoTracking()
+            .SingleAsync(i => i.Id == invoice.Id);
+        persisted.Status.Should().Be(InvoiceStatus.Overpaid);
+        persisted.PaidAmountUnits.Should().Be(firstAmount + secondAmount);
+        (await _dbContext.PaymentTransfers.AsNoTracking()
+            .CountAsync(t => t.InvoiceId == invoice.Id)).Should().Be(2);
     }
 
     [Fact]
