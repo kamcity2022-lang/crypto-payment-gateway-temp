@@ -41,6 +41,9 @@ namespace Gateway.Persistence.Migrations
                     b.Property<bool>("EmailConfirmed")
                         .HasColumnType("boolean");
 
+                    b.Property<bool>("IsDisabled")
+                        .HasColumnType("boolean");
+
                     b.Property<bool>("IsSuperAdmin")
                         .HasColumnType("boolean");
 
@@ -331,6 +334,12 @@ namespace Gateway.Persistence.Migrations
                     b.Property<DateTime>("ExpiresAtUtc")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<string>("InvitedEmail")
+                        .HasColumnType("text");
+
+                    b.Property<string>("InvitedRole")
+                        .HasColumnType("text");
+
                     b.Property<string>("HashedToken")
                         .IsRequired()
                         .HasColumnType("text");
@@ -347,6 +356,8 @@ namespace Gateway.Persistence.Migrations
                         .IsUnique();
 
                     b.HasIndex("MerchantId", "IsUsed", "ExpiresAtUtc");
+
+                    b.HasIndex("MerchantId", "InvitedEmail", "IsUsed");
 
                     b.ToTable("MerchantClaimTokens");
                 });

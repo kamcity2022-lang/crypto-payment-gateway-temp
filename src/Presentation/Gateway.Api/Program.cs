@@ -38,6 +38,11 @@ builder.Services.AddIdentity<ApplicationUser, IdentityRole>(options =>
 .AddEntityFrameworkStores<GatewayDbContext>()
 .AddDefaultTokenProviders();
 
+// Role or disabled-state changes update the user security stamp; validate
+// on every request rather than allowing stale role claims for 30 minutes.
+builder.Services.Configure<SecurityStampValidatorOptions>(options =>
+    options.ValidationInterval = TimeSpan.Zero);
+
 // Custom claims factory to inject MerchantId into auth cookie
 builder.Services.AddScoped<IUserClaimsPrincipalFactory<ApplicationUser>, CustomUserClaimsPrincipalFactory>();
 

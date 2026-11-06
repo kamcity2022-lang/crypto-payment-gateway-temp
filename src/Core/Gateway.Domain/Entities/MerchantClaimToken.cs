@@ -11,6 +11,8 @@ public class MerchantClaimToken
     public string HashedToken { get; private set; } = string.Empty;
     public DateTime ExpiresAtUtc { get; private set; }
     public bool IsUsed { get; private set; }
+    public string? InvitedEmail { get; private set; }
+    public string? InvitedRole { get; private set; }
     public DateTime CreatedAtUtc { get; private set; }
 
     private MerchantClaimToken() { }
@@ -23,6 +25,16 @@ public class MerchantClaimToken
         ExpiresAtUtc = DateTime.UtcNow.Add(validity);
         CreatedAtUtc = DateTime.UtcNow;
         IsUsed = false;
+    }
+
+    public MerchantClaimToken(Guid merchantId, string plainToken, TimeSpan validity,
+        string email, string role) : this(merchantId, plainToken, validity)
+    {
+        if (string.IsNullOrWhiteSpace(email)) throw new ArgumentException("Email required.", nameof(email));
+        if (role != "Admin" && role != "Developer" && role != "Viewer")
+            throw new ArgumentException("Only non-owner team roles may be invited.", nameof(role));
+        InvitedEmail = email.Trim().ToLowerInvariant();
+        InvitedRole = role;
     }
 
     public bool Validate(string plainToken)

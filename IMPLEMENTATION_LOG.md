@@ -146,3 +146,15 @@
 - Merchant Dashboard UI for key lifecycle, including one-time credential display and explicit confirmation on destructive actions.
 - HTTP/PostgreSQL integration tests for tenant isolation, permissions, lifecycle and HMAC usage.
 - CSRF protection, rate limiting and full audit remain mandatory before production launch under the previously deferred security backlog.
+
+## Phase 2 — Merchant Team Management
+**Status:** Draft PR pending CI.
+
+- Merchant Owner can invite Admin/Developer/Viewer members using email-bound, expiring, single-use claim tokens.
+- Existing owner onboarding tokens remain backward compatible and retain the Owner role.
+- Team list, role changes, disabling/re-enabling members; other tenants cannot view or modify team members.
+- Owner role is immutable through delegated management, preventing Owner takeover or self-disable.
+- Disabled users cannot log in; roles and disabled-state changes rotate security stamps and Identity cookies validate the stamp on each request.
+- Dashboard supports owner team operations and one-time invitation token presentation.
+- Integration tests cover role/tenant restrictions, token metadata and role changes.
+- A transactional outbox/email sender, CSRF protection, rate limits and comprehensive audit are still required before production launch.

@@ -41,6 +41,7 @@ public class GatewayDbContext : IdentityDbContext<ApplicationUser>
         {
             b.HasKey(t => t.Id);
             b.HasIndex(t => t.HashedToken).IsUnique();
+            b.HasIndex(t => new { t.MerchantId, t.InvitedEmail, t.IsUsed });
             b.HasIndex(t => new { t.MerchantId, t.IsUsed, t.ExpiresAtUtc });
         });
 

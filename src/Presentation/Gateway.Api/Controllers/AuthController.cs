@@ -80,6 +80,15 @@ public class AuthController : ControllerBase
                 return BadRequest(new { error = "Invalid, expired, or already used activation token." });
             }
 
+            // Team invitations are bound to the exact intended recipient.
+            if (tokenRecord.InvitedEmail is not null &&
+                !string.Equals(tokenRecord.InvitedEmail, request.Email.Trim(),
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                await transaction.RollbackAsync(ct);
+                return BadRequest(new { error = "Invitation was issued for another email." });
+            }
+
             var existingUser = await _userManager.FindByEmailAsync(request.Email);
             if (existingUser != null)
             {
@@ -103,7 +112,7 @@ public class AuthController : ControllerBase
                 return BadRequest(new { error = "User creation failed.", details = createResult.Errors });
             }
 
-            var roleResult = await _userManager.AddToRoleAsync(user, "Owner");
+            var roleResult = await _userManager.AddToRoleAsync(user, tokenRecord.InvitedRole ?? "Owner");
             if (!roleResult.Succeeded)
             {
                 await transaction.RollbackAsync(ct);
@@ -149,6 +158,8 @@ public class AuthController : ControllerBase
         {
             return Unauthorized(new { error = "Email verification required." });
         }
+        if (user.IsDisabled)
+            return Unauthorized(new { error = "Account disabled." });
 
         var result = await _signInManager.CheckPasswordSignInAsync(user, request.Password, lockoutOnFailure: true);
         if (!result.Succeeded)
