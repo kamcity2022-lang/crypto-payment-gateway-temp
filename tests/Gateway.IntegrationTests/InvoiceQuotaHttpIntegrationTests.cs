@@ -94,7 +94,7 @@ public class InvoiceQuotaIntegrationTests : IAsyncLifetime
         Guid? merchantId = null)
     {
         await using var db = new GatewayDbContext(CreateOptions());
-        var controller = new InvoicesController(db)
+        var controller = new InvoicesController(db, new FixedTestRateProvider())
         {
             ControllerContext = new ControllerContext
             {

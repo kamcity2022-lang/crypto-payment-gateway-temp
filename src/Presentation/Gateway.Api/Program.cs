@@ -3,6 +3,7 @@ using Gateway.Application.Contracts;
 using Gateway.Blockchain.Tron;
 using Gateway.Domain.Entities;
 using Gateway.Infrastructure.Security;
+using Gateway.Infrastructure.ExchangeRates;
 using Gateway.Persistence;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
@@ -70,6 +71,11 @@ builder.Services.ConfigureApplicationCookie(options =>
 
 // 5. Core Infrastructure Services
 builder.Services.AddSingleton<ISecretProtector, AesGcmSecretProtector>();
+builder.Services.AddMemoryCache();
+builder.Services.AddHttpClient<IExchangeRateProvider, CoinbaseUsdtUsdRateProvider>(client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(5);
+});
 
 
 // 7. Controllers & Swagger

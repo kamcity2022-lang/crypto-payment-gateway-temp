@@ -7,6 +7,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Gateway.Api.Authentication;
+using Gateway.Application.Contracts;
 using Gateway.Application.DTOs;
 using Gateway.Blockchain.Tron;
 using Gateway.Domain.Entities;
@@ -24,10 +25,12 @@ namespace Gateway.Api.Controllers;
 public class InvoicesController : ControllerBase
 {
     private readonly GatewayDbContext _dbContext;
+    private readonly IExchangeRateProvider _exchangeRateProvider;
 
-    public InvoicesController(GatewayDbContext dbContext)
+    public InvoicesController(GatewayDbContext dbContext, IExchangeRateProvider exchangeRateProvider)
     {
         _dbContext = dbContext;
+        _exchangeRateProvider = exchangeRateProvider;
     }
 
     [HttpPost]
@@ -78,6 +81,22 @@ public class InvoicesController : ControllerBase
             {
                 return ReturnIdempotencyResult(cached, requestPayloadHash);
             }
+        }
+
+        // Obtain a validated market quote before acquiring DB row locks. A
+        // provider outage must not consume quota, address indices or invoices.
+        ExchangeRateQuote quote;
+        try
+        {
+            quote = await _exchangeRateProvider.GetUsdtUsdAsync(ct);
+        }
+        catch (ExchangeRateUnavailableException)
+        {
+            return StatusCode(503, new
+            {
+                error = "EXCHANGE_RATE_UNAVAILABLE",
+                message = "A fresh USDT/USD rate is not currently available."
+            });
         }
 
         await using var tx = await _dbContext.Database.BeginTransactionAsync(IsolationLevel.ReadCommitted, ct);
@@ -173,7 +192,7 @@ public class InvoicesController : ControllerBase
             // Otherwise EF Core can assume an entity with a populated generated GUID key already exists.
             _dbContext.DerivedAddresses.Add(derivedAddressEntity);
 
-            const decimal exchangeRate = 1.0m;
+            var exchangeRate = quote.UsdPerUsdt;
             var cryptoAmount = request.FiatAmount / exchangeRate;
             var expectedUnits = (long)Math.Round(cryptoAmount * 1_000_000m, MidpointRounding.AwayFromZero);
             const long underpaymentThreshold = 50_000L;
@@ -186,8 +205,8 @@ public class InvoicesController : ControllerBase
                 fiatAmount: request.FiatAmount,
                 fiatCurrency: fiatCurrency,
                 exchangeRate: exchangeRate,
-                exchangeRateSource: "DirectPegProvider",
-                exchangeRateTimestampUtc: DateTime.UtcNow,
+                exchangeRateSource: quote.Source,
+                exchangeRateTimestampUtc: quote.ObservedAtUtc.UtcDateTime,
                 expectedAmountUnits: expectedUnits,
                 underpaymentThresholdUnits: underpaymentThreshold,
                 callbackUrl: request.CallbackUrl,
