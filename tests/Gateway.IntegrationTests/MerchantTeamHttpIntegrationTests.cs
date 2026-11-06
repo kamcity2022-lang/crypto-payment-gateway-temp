@@ -130,6 +130,42 @@ public sealed class MerchantTeamHttpIntegrationTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task InviteActivation_RejectsWrongEmail_ThenAssignsInvitedRoleOnce()
+    {
+        using var invite = await _owner.PostAsJsonAsync(
+            "/api/v1/dashboard/team/invite",
+            new { email = "new-developer@example.com", role = "Developer" });
+        invite.StatusCode.Should().Be(HttpStatusCode.OK);
+        using var doc = JsonDocument.Parse(await invite.Content.ReadAsStringAsync());
+        var token = doc.RootElement.GetProperty("inviteToken").GetString()!;
+
+        using var anonymous = _factory.CreateClient(
+            new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+        using var wrong = await anonymous.PostAsJsonAsync(
+            "/api/v1/auth/activate",
+            new { email = "wrong@example.com", password = "NewDevPassword@123", token });
+        wrong.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+
+        using var valid = await anonymous.PostAsJsonAsync(
+            "/api/v1/auth/activate",
+            new { email = "new-developer@example.com", password = "NewDevPassword@123", token });
+        valid.StatusCode.Should().Be(HttpStatusCode.OK,
+            await valid.Content.ReadAsStringAsync());
+
+        using var replay = await anonymous.PostAsJsonAsync(
+            "/api/v1/auth/activate",
+            new { email = "new-developer@example.com", password = "NewDevPassword@123", token });
+        replay.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+
+        using var scope = _factory.Services.CreateScope();
+        var users = scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
+        var created = await users.FindByEmailAsync("new-developer@example.com");
+        created.Should().NotBeNull();
+        created!.MerchantId.Should().Be(_merchant);
+        (await users.GetRolesAsync(created)).Should().ContainSingle().Which.Should().Be("Developer");
+    }
+
+    [Fact]
     public async Task AdminAndViewerCannotManageTeamAndOtherTenantCannotSeeUsers()
     {
         using var denied = await _admin.PostAsJsonAsync(
