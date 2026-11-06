@@ -69,3 +69,14 @@
 - Real HTTP/PostgreSQL tests cover authorization, tenant isolation, concurrency, lifecycle, quota display and failure cases.
 
 **Verification:** GitHub Actions must pass before merging. .NET SDK/Docker unavailable in coding environment.
+
+## P0.2 — Dynamic USDT/USD Exchange Rate
+**Status:** Implemented on isolated feature branch; awaiting CI.
+
+- Removed the unconditional 1:1 USDT/USD assumption in invoice creation.
+- Added injectable Coinbase Exchange USDT-USD market-rate provider with short-lived cache.
+- Enforced observed timestamp freshness, positive rates and configurable depeg bounds.
+- Fetch happens before database transaction; failures produce 503 without creating an invoice or consuming quota.
+- Persist market source, timestamp and rate as immutable per-invoice snapshots.
+- Existing quota integration tests use an explicit deterministic provider; they do not depend on live internet.
+- No secrets/config hardening, migrations or changes to scanner/outbox/webhook flow.

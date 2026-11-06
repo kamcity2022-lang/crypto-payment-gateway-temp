@@ -5,6 +5,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using FluentAssertions;
 using Gateway.Api.Controllers;
+using Gateway.Application.Contracts;
 using Gateway.Application.DTOs;
 using Gateway.Domain.Entities;
 using Gateway.Domain.Enums;
@@ -91,10 +92,11 @@ public class InvoiceQuotaIntegrationTests : IAsyncLifetime
     private async Task<IActionResult> SendAsync(
         CreateInvoiceRequest request,
         string? idempotencyKey = null,
-        Guid? merchantId = null)
+        Guid? merchantId = null,
+        IExchangeRateProvider? rateProvider = null)
     {
         await using var db = new GatewayDbContext(CreateOptions());
-        var controller = new InvoicesController(db)
+        var controller = new InvoicesController(db, rateProvider ?? new FixedTestRateProvider())
         {
             ControllerContext = new ControllerContext
             {
@@ -374,5 +376,46 @@ public class InvoiceQuotaIntegrationTests : IAsyncLifetime
         second.Count.Should().Be(1);
         second.Volume.Should().Be(60m);
         second.InvoiceCount.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task CreateInvoice_RateUnavailable_Returns503WithoutPersistingAnything()
+    {
+        var errorProvider = new ThrowingRateProvider();
+        var actionResult = await SendAsync(CreateRequest(25m), "rate-unavailable", rateProvider: errorProvider);
+        var result = actionResult.Should().BeOfType<ObjectResult>().Subject;
+        result.StatusCode.Should().Be(503);
+        JsonSerializer.Serialize(result.Value).Should().Contain("EXCHANGE_RATE_UNAVAILABLE");
+
+        var usage = await ReadUsageAsync();
+        usage.Count.Should().Be(0);
+        usage.InvoiceCount.Should().Be(0);
+        usage.Volume.Should().Be(0m);
+
+        await using var db = new GatewayDbContext(CreateOptions());
+        (await db.MerchantIdempotencyKeys.CountAsync(k =>
+            k.MerchantId == _merchantId && k.Key == "rate-unavailable")).Should().Be(0);
+        (await db.DerivedAddresses.CountAsync()).Should().Be(0);
+    }
+
+    [Fact]
+    public async Task CreateInvoice_DynamicRate_SnapshotsRateSourceAndObservationTime()
+    {
+        var observed = DateTimeOffset.UtcNow.AddSeconds(-5);
+        var quote = new ExchangeRateQuote(0.995m, "Test:MarketFeed", observed);
+        var result = await SendAsync(CreateRequest(99.50m), "market-snapshot",
+            rateProvider: new FixedTestRateProvider(quote));
+        var created = result.Should().BeOfType<CreatedAtActionResult>().Subject;
+        var response = created.Value.Should().BeOfType<InvoiceResponseDto>().Subject;
+        response.ExchangeRate.Should().Be(0.995m);
+        response.ExpectedCryptoAmount.Should().Be(100m);
+        response.ExpectedUnits.Should().Be(100_000_000L);
+
+        await using var db = new GatewayDbContext(CreateOptions());
+        var invoice = await db.Invoices.SingleAsync(i => i.Id == response.InvoiceId);
+        invoice.ExchangeRate.Should().Be(0.995m);
+        invoice.ExchangeRateSource.Should().Be("Test:MarketFeed");
+        invoice.ExchangeRateTimestampUtc.Should().BeCloseTo(observed.UtcDateTime,
+            TimeSpan.FromMilliseconds(1));
     }
 }

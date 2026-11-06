@@ -265,7 +265,7 @@ public sealed class AdminPlansHttpIntegrationTests : IAsyncLifetime
     private async Task<IActionResult> InvoiceAsync(Guid merchantId, decimal amount)
     {
         await using var db = NewDb();
-        var ctrl = new InvoicesController(db) {
+        var ctrl = new InvoicesController(db, new FixedTestRateProvider()) {
             ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() }
         };
         ctrl.HttpContext.Items["MerchantId"] = merchantId;
