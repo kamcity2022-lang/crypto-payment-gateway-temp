@@ -38,9 +38,8 @@ public sealed class MerchantApiKeyHttpIntegrationTests : IAsyncLifetime
     public async Task InitializeAsync()
     {
         await _postgres.StartAsync();
-        _factory = new TestWebApplicationFactory(_postgres.GetConnectionString())
-            .WithWebHostBuilder(b => b.ConfigureTestServices(s =>
-                s.AddSingleton<IExchangeRateProvider>(new FixedTestRateProvider())));
+        // Key management tests don't create invoices and need no rate stub.
+        _factory = new TestWebApplicationFactory(_postgres.GetConnectionString());
         // Start the hosted API so Program.cs applies migrations before
         // we seed merchant rows using an independent DbContext.
         using var startup = _factory.CreateClient(
