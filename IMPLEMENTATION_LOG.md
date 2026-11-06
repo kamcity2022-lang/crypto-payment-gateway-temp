@@ -204,3 +204,13 @@
 - Safe DOM textContent is used for data (no HTML interpolation). Authenticated sessions protect list/details; async response sequencing prevents stale results after logout/filter changes.
 - HTTP/PostgreSQL integration tests cover filtering, other-merchant isolation, invoice details and invalid query ranges; HTML smoke test checks controls.
 - Full operational audit/monitoring, docs and production security hardening remain before launch.
+
+## Phase 2 — Merchant Documentation and Operational Runbook
+**Status:** Draft PR pending CI.
+
+- New README, Merchant Onboarding integration guide and Operational Readiness runbook aligned with the implementation.
+- Documents exact API and webhook HMAC formats, onboarding, idempotency, status, quotas, and error handling.
+- Adds opt-in .NET 10 executable merchant sample and deterministic signing-verification vectors/tests.
+- Lists API/Worker env configuration names, .NET/Docker development commands, live TronGrid provider caveat, security/backup/monitoring/testnet release gates.
+- Existing docs/PROJECT_STATUS.md is marked as historical rather than current.
+- PR #15 Audit remains separate and unmerged in master at time this documentation was authored.
