@@ -3,6 +3,7 @@ using System.Data;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Gateway.Api.Auditing;
 using Gateway.Application.DTOs;
 using Gateway.Domain.Entities;
 using Gateway.Persistence;
@@ -53,6 +54,7 @@ public sealed class AdminPlansController : ControllerBase
         if (!request.IsDefault)
         {
             _db.Plans.Add(plan);
+            AuditTrail.Record(_db, User, null, "plan.created", "Plan", plan.Id.ToString());
             await _db.SaveChangesAsync(ct);
             return CreatedAtAction(nameof(GetPlan), new { id = plan.Id }, ToResponse(plan));
         }
@@ -63,6 +65,7 @@ public sealed class AdminPlansController : ControllerBase
         await _db.Plans.Where(p => p.IsDefault)
             .ExecuteUpdateAsync(s => s.SetProperty(p => p.IsDefault, false), ct);
         _db.Plans.Add(plan);
+        AuditTrail.Record(_db, User, null, "plan.created_default", "Plan", plan.Id.ToString());
         await _db.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);
         return CreatedAtAction(nameof(GetPlan), new { id = plan.Id }, ToResponse(plan));
@@ -76,6 +79,7 @@ public sealed class AdminPlansController : ControllerBase
 
         plan.Update(request.Name, request.Description ?? string.Empty,
             request.MonthlyInvoiceLimit, request.MonthlyVolumeLimitUsd, request.PriceUsd);
+        AuditTrail.Record(_db, User, null, "plan.updated", "Plan", plan.Id.ToString());
         await _db.SaveChangesAsync(ct);
         return Ok(ToResponse(plan));
     }
@@ -86,6 +90,7 @@ public sealed class AdminPlansController : ControllerBase
         var plan = await _db.Plans.FirstOrDefaultAsync(p => p.Id == id, ct);
         if (plan is null) return NotFound(new { error = "PLAN_NOT_FOUND" });
         plan.Activate();
+        AuditTrail.Record(_db, User, null, "plan.activated", "Plan", plan.Id.ToString());
         await _db.SaveChangesAsync(ct);
         return Ok(ToResponse(plan));
     }
@@ -104,6 +109,7 @@ public sealed class AdminPlansController : ControllerBase
             });
 
         plan.Deactivate();
+        AuditTrail.Record(_db, User, null, "plan.deactivated", "Plan", plan.Id.ToString());
         await _db.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);
         // Existing subscriptions deliberately remain untouched.
@@ -129,6 +135,7 @@ public sealed class AdminPlansController : ControllerBase
             await _db.Plans.Where(p => p.IsDefault && p.Id != id)
                 .ExecuteUpdateAsync(s => s.SetProperty(p => p.IsDefault, false), ct);
             target.SetAsDefault(true);
+            AuditTrail.Record(_db, User, null, "plan.set_default", "Plan", target.Id.ToString());
             await _db.SaveChangesAsync(ct);
         }
         await tx.CommitAsync(ct);

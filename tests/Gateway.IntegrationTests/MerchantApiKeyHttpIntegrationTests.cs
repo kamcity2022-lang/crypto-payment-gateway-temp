@@ -112,6 +112,48 @@ public sealed class MerchantApiKeyHttpIntegrationTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task AuditTrail_KeyLifecycle_IsTenantScopedAndDoesNotLeakSecrets()
+    {
+        using var created = await _owner.PostAsJsonAsync("/api/v1/dashboard/api-keys",
+            new { name = "Audit Test Key" });
+        created.StatusCode.Should().Be(HttpStatusCode.Created);
+        using var json = JsonDocument.Parse(await created.Content.ReadAsStringAsync());
+        var keyId = json.RootElement.GetProperty("id").GetGuid();
+        var secret = json.RootElement.GetProperty("apiSecret").GetString()!;
+        var apiKey = json.RootElement.GetProperty("apiKey").GetString()!;
+
+        using var revoked = await _owner.PostAsync(
+            "/api/v1/dashboard/api-keys/" + keyId + "/revoke", null);
+        revoked.StatusCode.Should().Be(HttpStatusCode.NoContent);
+
+        using var audit = await _owner.GetAsync("/api/v1/dashboard/audit");
+        audit.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = await audit.Content.ReadAsStringAsync();
+        body.Should().Contain("api_key.created");
+        body.Should().Contain("api_key.revoked");
+        body.Should().Contain(keyId.ToString());
+        body.Should().NotContain(secret);
+        body.Should().NotContain(apiKey);
+        body.Should().NotContain("encryptedSecret");
+        body.Should().NotContain("apiKeyHash");
+
+        using var other = await _other.GetAsync("/api/v1/dashboard/audit");
+        other.StatusCode.Should().Be(HttpStatusCode.OK);
+        (await other.Content.ReadAsStringAsync()).Should().NotContain(keyId.ToString());
+
+        using var viewer = await _viewer.GetAsync("/api/v1/dashboard/audit");
+        viewer.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        using var developer = await _developer.GetAsync("/api/v1/dashboard/audit");
+        developer.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        using var anon = await _anonymous.GetAsync("/api/v1/dashboard/audit");
+        anon.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+
+        await using var db = NewDb();
+        (await db.AuditEntries.AsNoTracking().CountAsync(a =>
+            a.MerchantId == _merchant && a.TargetId == keyId.ToString())).Should().Be(2);
+    }
+
+    [Fact]
     public async Task Rotate_RevokesOriginal_AndRevokeDisablesReplacement()
     {
         using var create = await _owner.PostAsJsonAsync("/api/v1/dashboard/api-keys",

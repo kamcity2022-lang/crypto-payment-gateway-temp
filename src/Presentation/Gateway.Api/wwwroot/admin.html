@@ -109,6 +109,19 @@
         </div>
     </section>
 
+    <section class="card" aria-labelledby="adminAuditHeading">
+        <div class="section-header">
+            <h3 id="adminAuditHeading">Operational Audit</h3>
+            <button type="button" class="btn btn-secondary" onclick="loadAdminAudit()">Refresh audit</button>
+        </div>
+        <p class="hint">Most recent administration changes, including Merchant and global Plan operations.</p>
+        <p id="adminAuditError" class="error hidden" role="alert"></p>
+        <div style="overflow-x:auto"><table>
+            <thead><tr><th>Time (UTC)</th><th>Merchant</th><th>Action</th><th>Target</th><th>Actor</th></tr></thead>
+            <tbody id="adminAuditTable"></tbody>
+        </table></div>
+    </section>
+
     <div class="card">
         <h3 style="margin-top: 0;">Merchant Management</h3>
         <div class="filter-bar">
@@ -270,6 +283,7 @@
                 loadOverview();
                 loadMerchants();
                 loadPlans();
+                loadAdminAudit();
             } else if (res.status === 401 || res.status === 403) {
                 showLogin();
             }
@@ -1030,6 +1044,37 @@ ${walletsHtml}
         await applyMerchantSubscriptionAction('/cancel', { method: 'POST' }, 'Cancel');
     }
 
+
+
+    async function loadAdminAudit() {
+        const table = document.getElementById('adminAuditTable');
+        const error = document.getElementById('adminAuditError');
+        table.replaceChildren();
+        error.classList.add('hidden');
+        try {
+            const response = await fetch(API_BASE + '/admin/audit?pageSize=20', {
+                credentials: 'include', cache: 'no-store'
+            });
+            if (!response.ok) throw new Error('Unable to retrieve operational audit.');
+            const data = await response.json();
+            if (!data.items.length) {
+                const cell = table.insertRow().insertCell();
+                cell.colSpan = 5;
+                cell.textContent = 'No recorded activity.';
+            }
+            for (const entry of data.items) {
+                const row = table.insertRow();
+                row.insertCell().textContent = new Date(entry.occurredAtUtc).toISOString().replace('T',' ').slice(0,19);
+                row.insertCell().textContent = entry.merchantId || 'Platform';
+                row.insertCell().textContent = entry.action;
+                row.insertCell().textContent = entry.targetType + ' ' + entry.targetId;
+                row.insertCell().textContent = entry.actorUserId || 'System';
+            }
+        } catch(e) {
+            error.textContent = e.message || 'Unable to retrieve operational audit.';
+            error.classList.remove('hidden');
+        }
+    }
 
     checkAuth();
 </script>

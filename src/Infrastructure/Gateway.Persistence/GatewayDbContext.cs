@@ -10,6 +10,7 @@ public class GatewayDbContext : IdentityDbContext<ApplicationUser>
     public GatewayDbContext(DbContextOptions<GatewayDbContext> options) : base(options) { }
     
     public DbSet<Merchant> Merchants => Set<Merchant>();
+    public DbSet<AuditEntry> AuditEntries => Set<AuditEntry>();
     public DbSet<MerchantApiKey> MerchantApiKeys => Set<MerchantApiKey>();
     public DbSet<Wallet> Wallets => Set<Wallet>();
     public DbSet<DerivedAddress> DerivedAddresses => Set<DerivedAddress>();
@@ -43,6 +44,17 @@ public class GatewayDbContext : IdentityDbContext<ApplicationUser>
             b.HasIndex(t => t.HashedToken).IsUnique();
             b.HasIndex(t => new { t.MerchantId, t.InvitedEmail, t.IsUsed });
             b.HasIndex(t => new { t.MerchantId, t.IsUsed, t.ExpiresAtUtc });
+        });
+
+        modelBuilder.Entity<AuditEntry>(b =>
+        {
+            b.HasKey(a => a.Id);
+            b.Property(a => a.Action).IsRequired().HasMaxLength(100);
+            b.Property(a => a.TargetType).IsRequired().HasMaxLength(50);
+            b.Property(a => a.TargetId).IsRequired().HasMaxLength(100);
+            b.Property(a => a.ActorUserId).HasMaxLength(450);
+            b.HasIndex(a => new { a.MerchantId, a.OccurredAtUtc });
+            b.HasIndex(a => a.OccurredAtUtc);
         });
 
         modelBuilder.Entity<Merchant>(b =>

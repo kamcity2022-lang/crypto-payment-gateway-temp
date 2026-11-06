@@ -5,6 +5,7 @@ using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Threading;
 using System.Threading.Tasks;
+using Gateway.Api.Auditing;
 using Gateway.Domain.Entities;
 using Gateway.Persistence;
 using Microsoft.AspNetCore.Authorization;
@@ -106,8 +107,10 @@ public sealed class MerchantTeamController : ControllerBase
         if (existing) return Conflict(new { error = "ACTIVE_INVITATION_EXISTS" });
 
         var raw = Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
-        _db.MerchantClaimTokens.Add(new MerchantClaimToken(
-            merchantId, raw, TimeSpan.FromDays(7), email, request.Role));
+        var invitation = new MerchantClaimToken(
+            merchantId, raw, TimeSpan.FromDays(7), email, request.Role);
+        _db.MerchantClaimTokens.Add(invitation);
+        AuditTrail.Record(_db, User, merchantId, "team.invited", "MerchantClaimToken", invitation.Id.ToString());
         await _db.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);
         Response.Headers.CacheControl = "no-store";
@@ -136,7 +139,10 @@ public sealed class MerchantTeamController : ControllerBase
         if (!removed.Succeeded) return Conflict(new { error = "ROLE_CHANGE_FAILED" });
         var added = await _users.AddToRoleAsync(user, request.Role);
         if (!added.Succeeded) return Conflict(new { error = "ROLE_CHANGE_FAILED" });
-        await _users.UpdateSecurityStampAsync(user);
+        var stamp = await _users.UpdateSecurityStampAsync(user);
+        if (!stamp.Succeeded) return Conflict(new { error = "ROLE_CHANGE_FAILED" });
+        AuditTrail.Record(_db, User, merchantId, "team.role_changed", "ApplicationUser", user.Id);
+        await _db.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);
         return Ok(new { userId = user.Id, role = request.Role });
     }
@@ -156,10 +162,16 @@ public sealed class MerchantTeamController : ControllerBase
                 StringComparison.Ordinal))
             return Conflict(new { error = "CANNOT_DISABLE_SELF" });
 
+        await using var tx = await _db.Database.BeginTransactionAsync(ct);
         user.IsDisabled = request.Disabled;
         var updated = await _users.UpdateAsync(user);
         if (!updated.Succeeded) return Conflict(new { error = "USER_UPDATE_FAILED" });
-        await _users.UpdateSecurityStampAsync(user);
+        var stamp = await _users.UpdateSecurityStampAsync(user);
+        if (!stamp.Succeeded) return Conflict(new { error = "USER_UPDATE_FAILED" });
+        AuditTrail.Record(_db, User, merchantId,
+            request.Disabled ? "team.disabled" : "team.enabled", "ApplicationUser", user.Id);
+        await _db.SaveChangesAsync(ct);
+        await tx.CommitAsync(ct);
         return Ok(new { userId = user.Id, disabled = user.IsDisabled });
     }
 }
