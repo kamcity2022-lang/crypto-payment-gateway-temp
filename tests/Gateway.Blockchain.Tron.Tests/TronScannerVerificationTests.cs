@@ -32,7 +32,9 @@ public class TronScannerVerificationTests
         var handler = new MockHttpMessageHandler(response);
         var httpClient = new HttpClient(handler);
         var config = new ConfigurationBuilder()
-            .AddInMemoryCollection(new[] { new System.Collections.Generic.KeyValuePair<string, string?>("Tron:UsdtContractAddress", UsdtContract) })
+            .AddInMemoryCollection(new[] { new System.Collections.Generic.KeyValuePair<string, string?>("Tron:Network", "Mainnet"),
+                new System.Collections.Generic.KeyValuePair<string, string?>("Tron:EnableMainnet", "true"),
+                new System.Collections.Generic.KeyValuePair<string, string?>("Tron:UsdtContractAddress", UsdtContract) })
             .Build();
         return new TronScannerService(null!, httpClient, config, NullLogger<TronScannerService>.Instance);
     }
