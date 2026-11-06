@@ -280,6 +280,45 @@ namespace Gateway.Persistence.Migrations
                     b.ToTable("Merchants");
                 });
 
+            modelBuilder.Entity("Gateway.Domain.Entities.MerchantApiKey", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ApiKeyHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("EncryptedSecret")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<Guid>("MerchantId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<DateTime?>("RevokedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ApiKeyHash")
+                        .IsUnique();
+
+                    b.HasIndex("MerchantId");
+
+                    b.ToTable("MerchantApiKeys");
+                });
+
             modelBuilder.Entity("Gateway.Domain.Entities.MerchantClaimToken", b =>
                 {
                     b.Property<Guid>("Id")
@@ -429,6 +468,15 @@ namespace Gateway.Persistence.Migrations
                     b.HasIndex("IsProcessed", "NextAttemptAtUtc");
 
                     b.ToTable("OutboxEvents");
+                });
+
+            modelBuilder.Entity("Gateway.Domain.Entities.MerchantApiKey", b =>
+                {
+                    b.HasOne("Gateway.Domain.Entities.Merchant", null)
+                        .WithMany()
+                        .HasForeignKey("MerchantId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("Gateway.Domain.Entities.PaymentTransfer", b =>

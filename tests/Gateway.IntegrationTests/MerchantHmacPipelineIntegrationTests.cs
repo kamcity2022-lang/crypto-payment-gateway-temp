@@ -60,6 +60,10 @@ public sealed class MerchantHmacPipelineIntegrationTests : IAsyncLifetime
             Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(ApiKey))).ToLowerInvariant(),
             protector.Encrypt(ApiSecret),
             protector.Encrypt("test-webhook-secret")));
+        db.MerchantApiKeys.Add(new MerchantApiKey(
+            _merchantId, "HMAC test",
+            Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(ApiKey))).ToLowerInvariant(),
+            protector.Encrypt(ApiSecret)));
         db.Wallets.Add(new Wallet(_merchantId, AccountXPub, "TRON"));
         db.Subscriptions.Add(new Subscription(_merchantId, defaultPlanId));
         await db.SaveChangesAsync();
@@ -102,6 +106,69 @@ public sealed class MerchantHmacPipelineIntegrationTests : IAsyncLifetime
         req.Headers.Add("X-Timestamp", timestamp);
         req.Headers.Add("X-Nonce", nonce);
         return req;
+    }
+
+    private static HttpRequestMessage SignedWithCredential(byte[] body, string apiKey, string apiSecret)
+    {
+        var timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString();
+        var nonce = Guid.NewGuid().ToString("N");
+        var canonical = "POST\n" + Route + "\n\n" + timestamp + "\n" + nonce + "\n" +
+            Convert.ToHexString(SHA256.HashData(body)).ToLowerInvariant();
+        using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(apiSecret));
+        var signature = Convert.ToHexString(
+            hmac.ComputeHash(Encoding.UTF8.GetBytes(canonical))).ToLowerInvariant();
+        var req = new HttpRequestMessage(HttpMethod.Post, Route);
+        req.Content = new ByteArrayContent(body);
+        req.Content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
+        req.Headers.Add("X-API-Key", apiKey);
+        req.Headers.Add("X-Signature", signature);
+        req.Headers.Add("X-Timestamp", timestamp);
+        req.Headers.Add("X-Nonce", nonce);
+        return req;
+    }
+
+    [Fact]
+    public async Task AdditionalKey_AuthorizesInvoice_AndRevocationImmediatelyBlocksHmac()
+    {
+        const string newKey = "cpg_live_1234567890abcdef1234567890abcdef";
+        const string newSecret = "test-new-secret-for-hmac";
+        Guid keyId;
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<GatewayDbContext>();
+            var protector = scope.ServiceProvider.GetRequiredService<ISecretProtector>();
+            var hash = Convert.ToHexString(
+                SHA256.HashData(Encoding.UTF8.GetBytes(newKey))).ToLowerInvariant();
+            var key = new MerchantApiKey(_merchantId, "Rotation candidate",
+                hash, protector.Encrypt(newSecret));
+            db.MerchantApiKeys.Add(key);
+            await db.SaveChangesAsync();
+            keyId = key.Id;
+        }
+
+        using var allowed = SignedWithCredential(Body(10m), newKey, newSecret);
+        using var accepted = await _client.SendAsync(allowed);
+        accepted.StatusCode.Should().Be(HttpStatusCode.Created,
+            await accepted.Content.ReadAsStringAsync());
+
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<GatewayDbContext>();
+            var key = await db.MerchantApiKeys.SingleAsync(k => k.Id == keyId);
+            key.Revoke();
+            await db.SaveChangesAsync();
+        }
+
+        using var blocked = SignedWithCredential(Body(10m), newKey, newSecret);
+        using var denied = await _client.SendAsync(blocked);
+        denied.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+
+        // Backward compatibility: revoking one key never breaks other active
+        // credentials belonging to the same merchant.
+        using var legacy = Signed(Body(10m));
+        using var legacyResponse = await _client.SendAsync(legacy);
+        legacyResponse.StatusCode.Should().Be(HttpStatusCode.Created,
+            await legacyResponse.Content.ReadAsStringAsync());
     }
 
     [Fact]
