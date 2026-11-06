@@ -37,7 +37,20 @@ public sealed class SubscriptionResponseDto
         var volumeLimit = s.CustomVolumeLimitUsd ?? plan.MonthlyVolumeLimitUsd;
         // Reset is performed lazily by invoice creation; display the effective
         // current-period usage without mutating persistence in GET endpoints.
-        var periodEnded = DateTime.UtcNow >= s.CurrentPeriodEndUtc;
+        var currentStart = s.CurrentPeriodStartUtc;
+        var currentEnd = s.CurrentPeriodEndUtc;
+        var periodEnded = DateTime.UtcNow >= currentEnd;
+        if (periodEnded)
+        {
+            // Mirror ResetPeriodIfExpired without mutating a GET request.
+            // Even if no new invoices exist, the reset date must be current.
+            var now = DateTime.UtcNow;
+            while (now >= currentEnd)
+            {
+                currentStart = currentEnd;
+                currentEnd = currentStart.AddMonths(1);
+            }
+        }
         var count = periodEnded ? 0 : s.CurrentPeriodInvoiceCount;
         var volume = periodEnded ? 0m : s.CurrentPeriodVolumeUsd;
 
@@ -48,8 +61,8 @@ public sealed class SubscriptionResponseDto
             PlanId = s.PlanId,
             PlanName = plan.Name,
             Status = s.Status,
-            CurrentPeriodStartUtc = s.CurrentPeriodStartUtc,
-            CurrentPeriodEndUtc = s.CurrentPeriodEndUtc,
+            CurrentPeriodStartUtc = currentStart,
+            CurrentPeriodEndUtc = currentEnd,
             CurrentPeriodInvoiceCount = count,
             CurrentPeriodVolumeUsd = volume,
             CustomInvoiceLimit = s.CustomInvoiceLimit,

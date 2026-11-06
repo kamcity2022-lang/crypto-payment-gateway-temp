@@ -105,6 +105,54 @@ public sealed class SubscriptionManagementHttpIntegrationTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task MerchantSubscription_ProjectsElapsedPeriodsWithoutMutatingDatabase()
+    {
+        var oldStart = DateTime.UtcNow.AddMonths(-4);
+        var oldEnd = oldStart.AddMonths(1);
+
+        await using (var db = Db())
+        {
+            await db.Database.ExecuteSqlInterpolatedAsync(
+                $"UPDATE \"Subscriptions\" SET \"CurrentPeriodStartUtc\" = {oldStart}, \"CurrentPeriodEndUtc\" = {oldEnd}, \"CurrentPeriodInvoiceCount\" = 5, \"CurrentPeriodVolumeUsd\" = 50 WHERE \"MerchantId\" = {_merchantId}");
+        }
+
+        using var response = await _owner.GetAsync("/api/v1/dashboard/subscription");
+        var dto = await ReadAsync(response, HttpStatusCode.OK);
+
+        dto.CurrentPeriodStartUtc.Should().BeAfter(oldStart);
+        dto.CurrentPeriodEndUtc.Should().BeAfter(DateTime.UtcNow);
+        dto.CurrentPeriodInvoiceCount.Should().Be(0);
+        dto.CurrentPeriodVolumeUsd.Should().Be(0m);
+        dto.RemainingInvoices.Should().Be(dto.EffectiveMonthlyInvoiceLimit);
+        dto.CurrentPeriodStartUtc.Should().BeBefore(dto.CurrentPeriodEndUtc);
+        response.Headers.CacheControl.Should().NotBeNull();
+        response.Headers.CacheControl!.NoStore.Should().BeTrue();
+
+        await using var verify = Db();
+        var stored = await verify.Subscriptions.AsNoTracking()
+            .SingleAsync(s => s.MerchantId == _merchantId);
+        stored.CurrentPeriodEndUtc.Should().BeCloseTo(oldEnd, TimeSpan.FromMilliseconds(10));
+        stored.CurrentPeriodInvoiceCount.Should().Be(5);
+        stored.CurrentPeriodVolumeUsd.Should().Be(50m);
+    }
+
+    [Fact]
+    public async Task MerchantSubscription_MissingSubscription_Returns404()
+    {
+        var merchantId = Guid.NewGuid();
+        await using (var db = Db())
+        {
+            db.Merchants.Add(new Merchant(merchantId, "No Subscription",
+                "hash_" + Guid.NewGuid().ToString("N"), "sec", "webhook"));
+            await db.SaveChangesAsync();
+        }
+        using var owner = _factory.CreateClientWithAuth(
+            "owner-without-subscription", new[] { "Owner" }, merchantId);
+        using var response = await owner.GetAsync("/api/v1/dashboard/subscription");
+        response.StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+
+    [Fact]
     public async Task OwnerCannotReadOtherMerchant_AndCannotPerformAdminMutations()
     {
         using var other = _factory.CreateClientWithAuth("other-owner", new[] { "Owner" }, _otherMerchantId);

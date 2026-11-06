@@ -124,3 +124,13 @@
 - Paid and Overpaid invoices continue to be scanned within the configured overpayment retention window to account for later transfers.
 - Shared webhook event constructor ensures consistent status payload and fails the transaction if Merchant data is missing.
 - Tests verify outbox parity, no duplicate expiry events, recovery, late payments, and continuing overpayment processing.
+
+## Phase 2 — Merchant Dashboard Subscription & Current Usage
+**Status:** Draft PR pending CI.
+
+- Merchant dashboard now shows effective Plan, Subscription status, invoice and USD volume usage, remaining limits, and next usage reset.
+- Uses authenticated tenant-scoped GET /api/v1/dashboard/subscription with no client-provided MerchantId.
+- Allows a read-only refresh, shows network/404 failures and clears merchant-specific data upon logout.
+- Uses DOM textContent rather than HTML for untrusted Plan names.
+- Subscription DTO projects elapsed usage periods into a future period without persisting mutations during GET.
+- Usage reset is not represented as a subscription billing renewal.
