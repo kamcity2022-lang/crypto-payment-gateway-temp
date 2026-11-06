@@ -13,6 +13,9 @@
     <Project Path="src/Presentation/Gateway.Api/Gateway.Api.csproj" />
     <Project Path="src/Presentation/Gateway.Worker/Gateway.Worker.csproj" />
   </Folder>
+  <Folder Name="/examples/">
+    <Project Path="examples/merchant-integration/Gateway.MerchantIntegration.Example.csproj" />
+  </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Gateway.Blockchain.Tron.Tests/Gateway.Blockchain.Tron.Tests.csproj" />
     <Project Path="tests/Gateway.Domain.Tests/Gateway.Domain.Tests.csproj" />

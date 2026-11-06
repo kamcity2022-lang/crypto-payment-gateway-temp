@@ -215,3 +215,14 @@
 - Tests assert role restrictions, tenant isolation, event presence and absence of raw keys, secrets or descriptions.
 - Audit coverage is intentionally limited to the above administrative operations. Remaining invoice/settlement/authentication events, retention policy and tamper-resistant external export are later operational tasks.
 - CSRF, rate limiting, config-secret rotation and monitoring remain release gates before production.
+
+
+## Phase 2 — Merchant Documentation and Operational Runbook
+**Status:** Draft PR pending CI.
+
+- New README, Merchant Onboarding integration guide and Operational Readiness runbook aligned with the implementation.
+- Documents exact API and webhook HMAC formats, onboarding, idempotency, status, quotas, and error handling.
+- Adds opt-in .NET 10 executable merchant sample and deterministic signing-verification vectors/tests.
+- Lists API/Worker env configuration names, .NET/Docker development commands, live TronGrid provider caveat, security/backup/monitoring/testnet release gates.
+- Existing docs/PROJECT_STATUS.md is marked as historical rather than current.
+- PR #15 Audit remains separate and unmerged in master at time this documentation was authored.
