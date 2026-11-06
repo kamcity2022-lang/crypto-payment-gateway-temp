@@ -132,6 +132,45 @@
         </table>
     </section>
 
+    <section class="card" aria-labelledby="webhookHeading">
+        <div class="subscription-heading">
+            <h3 id="webhookHeading" style="margin:0;">Webhook Settings &amp; Deliveries</h3>
+            <button type="button" class="btn btn-secondary" onclick="loadWebhookData()">Refresh</button>
+        </div>
+        <p class="subscription-note">Only Owner/Admin can update the endpoint, send test events, or request redelivery.</p>
+        <p id="webhookError" class="error hidden" role="alert"></p>
+        <div class="webhook-settings">
+            <label for="defaultWebhookUrl">Default webhook HTTPS URL</label>
+            <input id="defaultWebhookUrl" class="input" placeholder="https://your-site.example/webhook" maxlength="2048" autocomplete="off">
+            <button class="btn" type="button" onclick="saveWebhookSettings()">Save URL</button>
+            <button class="btn btn-secondary" type="button" onclick="sendTestWebhook()">Send test event</button>
+        </div>
+        <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-top:20px;">
+            <label for="webhookStatusFilter">Delivery status</label>
+            <select id="webhookStatusFilter" class="input" style="width:auto;margin:0;" onchange="loadWebhookEvents(1)">
+                <option value="all">All</option>
+                <option value="delivered">Delivered</option>
+                <option value="queued">Queued</option>
+                <option value="retry">Retry</option>
+                <option value="exhausted">Exhausted</option>
+            </select>
+            <label for="webhookInvoiceFilter">Invoice ID (optional)</label>
+            <input id="webhookInvoiceFilter" class="input" style="width:260px;margin:0;" placeholder="Invoice UUID">
+            <button class="btn btn-secondary" type="button" onclick="loadWebhookEvents(1)">Filter</button>
+        </div>
+        <div style="overflow-x:auto;">
+            <table>
+                <thead><tr><th>Event</th><th>Destination</th><th>Status</th><th>Attempts</th><th>Last error</th><th>Action</th></tr></thead>
+                <tbody id="webhookEventsTable"><tr><td colspan="6">Loading...</td></tr></tbody>
+            </table>
+        </div>
+        <div style="display:flex;align-items:center;gap:12px;margin-top:12px;">
+            <button class="btn btn-secondary" type="button" id="webhookPrev" onclick="loadWebhookEvents(webhookPage - 1)">Previous</button>
+            <span id="webhookPageLabel">-</span>
+            <button class="btn btn-secondary" type="button" id="webhookNext" onclick="loadWebhookEvents(webhookPage + 1)">Next</button>
+        </div>
+    </section>
+
     <section class="card" aria-labelledby="apiKeyHeading">
         <div class="subscription-heading">
             <h3 id="apiKeyHeading" style="margin:0;">API Keys</h3>
@@ -191,6 +230,7 @@
                 loadSubscription();
                 loadApiKeys();
                 loadTeam();
+                loadWebhookData();
             } else {
                 showLogin();
             }
@@ -241,6 +281,8 @@
         clearTeamInvitation();
         document.getElementById("teamMembersTable").replaceChildren();
         document.getElementById("teamInviteForm").classList.add("hidden");
+        document.getElementById("defaultWebhookUrl").value = "";
+        document.getElementById("webhookEventsTable").replaceChildren();
     }
 
     async function loadOverview() {
@@ -550,6 +592,125 @@
             if (!res.ok) throw new Error('User update rejected.');
             await loadTeam();
         } catch (e) { teamError(e.message); }
+    }
+
+
+    let webhookPage = 1;
+
+    function showWebhookError(message) {
+        const error = document.getElementById('webhookError');
+        error.textContent = message;
+        error.classList.remove('hidden');
+    }
+
+    function resetWebhookError() {
+        const error = document.getElementById('webhookError');
+        error.textContent = '';
+        error.classList.add('hidden');
+    }
+
+    async function loadWebhookData() {
+        resetWebhookError();
+        try {
+            const response = await fetch(API_BASE + '/dashboard/webhooks/settings', {
+                credentials: 'include', cache: 'no-store'
+            });
+            if (!response.ok) throw new Error('Unable to retrieve webhook settings.');
+            const result = await response.json();
+            document.getElementById('defaultWebhookUrl').value = result.defaultWebhookUrl || '';
+        } catch (e) {
+            showWebhookError(e.message || 'Unable to retrieve webhook settings.');
+        }
+        await loadWebhookEvents(1);
+    }
+
+    async function saveWebhookSettings() {
+        const webhookUrl = document.getElementById('defaultWebhookUrl').value.trim();
+        if (!webhookUrl.startsWith('https://')) return showWebhookError('Use an HTTPS webhook URL.');
+        if (!confirm('Update the default webhook URL for future test deliveries?')) return;
+        resetWebhookError();
+        try {
+            const response = await fetch(API_BASE + '/dashboard/webhooks/settings', {
+                method: 'PUT', credentials: 'include',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ webhookUrl })
+            });
+            if (!response.ok) throw new Error('Could not save URL. Owner/Admin access is required.');
+            await loadWebhookData();
+        } catch (e) { showWebhookError(e.message); }
+    }
+
+    async function sendTestWebhook() {
+        if (!confirm('Queue a test webhook to the configured default URL?')) return;
+        resetWebhookError();
+        try {
+            const response = await fetch(API_BASE + '/dashboard/webhooks/test', {
+                method: 'POST', credentials: 'include'
+            });
+            if (!response.ok) throw new Error('Could not queue test webhook. Verify URL and permissions.');
+            await loadWebhookEvents(1);
+        } catch (e) { showWebhookError(e.message); }
+    }
+
+    async function loadWebhookEvents(page) {
+        webhookPage = Math.max(1, page);
+        const table = document.getElementById('webhookEventsTable');
+        table.replaceChildren();
+        const params = new URLSearchParams({
+            page: String(webhookPage), pageSize: '10',
+            status: document.getElementById('webhookStatusFilter').value
+        });
+        const invoiceId = document.getElementById('webhookInvoiceFilter').value.trim();
+        if (invoiceId) params.set('invoiceId', invoiceId);
+        try {
+            const response = await fetch(
+                API_BASE + '/dashboard/webhooks/events?' + params.toString(),
+                { credentials: 'include', cache: 'no-store' });
+            if (!response.ok) throw new Error('Could not load webhook history. Check the invoice ID filter.');
+            const result = await response.json();
+            const events = result.items || [];
+            if (events.length === 0) {
+                const cell = table.insertRow().insertCell();
+                cell.colSpan = 6;
+                cell.textContent = 'No webhook events.';
+            }
+            for (const evt of events) {
+                const row = table.insertRow();
+                row.insertCell().textContent = evt.eventType + ' (' + evt.eventId.slice(0, 8) + ')';
+                row.insertCell().textContent = evt.destinationUrl;
+                row.insertCell().textContent = evt.status;
+                row.insertCell().textContent = String(evt.attemptCount);
+                row.insertCell().textContent = evt.lastError || '-';
+                const actions = row.insertCell();
+                if (evt.status === 'Delivered' || evt.status === 'Exhausted') {
+                    const button = document.createElement('button');
+                    button.type = 'button';
+                    button.className = 'btn btn-secondary';
+                    button.textContent = 'Redeliver';
+                    button.onclick = () => redeliverWebhook(evt.eventId);
+                    actions.appendChild(button);
+                }
+            }
+            const pages = Math.max(1, result.totalPages || 0);
+            document.getElementById('webhookPageLabel').textContent =
+                'Page ' + webhookPage + ' / ' + pages + ' · ' + result.totalCount + ' events';
+            document.getElementById('webhookPrev').disabled = webhookPage <= 1;
+            document.getElementById('webhookNext').disabled = webhookPage >= pages;
+        } catch (e) {
+            showWebhookError(e.message || 'Unable to load webhook history.');
+        }
+    }
+
+    async function redeliverWebhook(id) {
+        if (!confirm('Queue this webhook for redelivery? The recipient may receive the event again.')) return;
+        resetWebhookError();
+        try {
+            const response = await fetch(
+                API_BASE + '/dashboard/webhooks/events/' + encodeURIComponent(id) + '/redeliver',
+                { method: 'POST', credentials: 'include' });
+            if (!response.ok) throw new Error('Redelivery rejected; the event may already be queued.');
+            await loadWebhookEvents(webhookPage);
+        } catch (e) { showWebhookError(e.message); }
     }
 
     // Initialize
