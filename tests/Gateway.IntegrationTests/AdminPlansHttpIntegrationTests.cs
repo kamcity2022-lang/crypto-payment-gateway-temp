@@ -92,6 +92,35 @@ public sealed class AdminPlansHttpIntegrationTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task GlobalAudit_RecordsPlanChanges_AndRequiresSuperAdmin()
+    {
+        var plan = await CreateAsync("Audited Plan");
+        using var changed = await _admin.PutAsJsonAsync($"{Route}/{plan.Id}",
+            new UpdatePlanRequest {
+                Name = "Audited Updated Plan", Description = "Safe description",
+                MonthlyInvoiceLimit = 20, MonthlyVolumeLimitUsd = 200m, PriceUsd = 19m
+            });
+        changed.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        using var list = await _admin.GetAsync("/api/v1/admin/audit?pageSize=10");
+        list.StatusCode.Should().Be(HttpStatusCode.OK);
+        var payload = await list.Content.ReadAsStringAsync();
+        payload.Should().Contain("plan.created");
+        payload.Should().Contain("plan.updated");
+        payload.Should().Contain(plan.Id.ToString());
+        payload.Should().NotContain("Safe description");
+
+        using var denied = await _owner.GetAsync("/api/v1/admin/audit");
+        denied.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        using var anonymous = await _anon.GetAsync("/api/v1/admin/audit");
+        anonymous.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+
+        await using var verify = NewDb();
+        (await verify.AuditEntries.AsNoTracking().CountAsync(a =>
+            a.MerchantId == null && a.TargetId == plan.Id.ToString())).Should().Be(2);
+    }
+
+    [Fact]
     public async Task Create_AndReadListAndDetail_Works()
     {
         var plan = await CreateAsync("Business");
