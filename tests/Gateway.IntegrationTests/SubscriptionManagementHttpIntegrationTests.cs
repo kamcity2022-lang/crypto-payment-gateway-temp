@@ -113,9 +113,7 @@ public sealed class SubscriptionManagementHttpIntegrationTests : IAsyncLifetime
         await using (var db = Db())
         {
             await db.Database.ExecuteSqlInterpolatedAsync(
-                $"UPDATE \"Subscriptions\" SET \"CurrentPeriodStartUtc\" = {oldStart}, " +
-                $"\"CurrentPeriodEndUtc\" = {oldEnd}, \"CurrentPeriodInvoiceCount\" = 5, " +
-                $"\"CurrentPeriodVolumeUsd\" = 50 WHERE \"MerchantId\" = {_merchantId}");
+                $"UPDATE \"Subscriptions\" SET \"CurrentPeriodStartUtc\" = {oldStart}, \"CurrentPeriodEndUtc\" = {oldEnd}, \"CurrentPeriodInvoiceCount\" = 5, \"CurrentPeriodVolumeUsd\" = 50 WHERE \"MerchantId\" = {_merchantId}");
         }
 
         using var response = await _owner.GetAsync("/api/v1/dashboard/subscription");
