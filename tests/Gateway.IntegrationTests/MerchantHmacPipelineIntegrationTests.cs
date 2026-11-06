@@ -60,6 +60,10 @@ public sealed class MerchantHmacPipelineIntegrationTests : IAsyncLifetime
             Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(ApiKey))).ToLowerInvariant(),
             protector.Encrypt(ApiSecret),
             protector.Encrypt("test-webhook-secret")));
+        db.MerchantApiKeys.Add(new MerchantApiKey(
+            _merchantId, "HMAC test",
+            Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(ApiKey))).ToLowerInvariant(),
+            protector.Encrypt(ApiSecret)));
         db.Wallets.Add(new Wallet(_merchantId, AccountXPub, "TRON"));
         db.Subscriptions.Add(new Subscription(_merchantId, defaultPlanId));
         await db.SaveChangesAsync();

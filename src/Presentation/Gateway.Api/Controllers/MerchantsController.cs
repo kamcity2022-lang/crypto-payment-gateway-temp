@@ -83,6 +83,9 @@ public class MerchantsController : ControllerBase
 
         _dbContext.Merchants.Add(merchant);
         _dbContext.Wallets.Add(wallet);
+        // New merchants also use the independently revocable key table.
+        _dbContext.MerchantApiKeys.Add(
+            new MerchantApiKey(merchant.Id, "Primary", apiKeyHash, encryptedApiSecret));
 
         // Assign Default Subscription
         var defaultPlan = await _dbContext.Plans.FirstOrDefaultAsync(p => p.IsDefault && p.IsActive, ct);

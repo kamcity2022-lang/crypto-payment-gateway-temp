@@ -10,6 +10,7 @@ public class GatewayDbContext : IdentityDbContext<ApplicationUser>
     public GatewayDbContext(DbContextOptions<GatewayDbContext> options) : base(options) { }
     
     public DbSet<Merchant> Merchants => Set<Merchant>();
+    public DbSet<MerchantApiKey> MerchantApiKeys => Set<MerchantApiKey>();
     public DbSet<Wallet> Wallets => Set<Wallet>();
     public DbSet<DerivedAddress> DerivedAddresses => Set<DerivedAddress>();
     public DbSet<Invoice> Invoices => Set<Invoice>();
@@ -47,6 +48,18 @@ public class GatewayDbContext : IdentityDbContext<ApplicationUser>
         {
             b.HasKey(m => m.Id);
             b.HasIndex(m => m.ApiKeyHash).IsUnique();
+        });
+
+        modelBuilder.Entity<MerchantApiKey>(b =>
+        {
+            b.HasKey(k => k.Id);
+            b.Property(k => k.Name).IsRequired().HasMaxLength(100);
+            b.Property(k => k.ApiKeyHash).IsRequired().HasMaxLength(64);
+            b.Property(k => k.EncryptedSecret).IsRequired();
+            b.HasIndex(k => k.ApiKeyHash).IsUnique();
+            b.HasIndex(k => k.MerchantId);
+            b.HasOne<Merchant>().WithMany().HasForeignKey(k => k.MerchantId)
+                .OnDelete(DeleteBehavior.Cascade);
         });
 
         modelBuilder.Entity<Wallet>(b =>

@@ -74,10 +74,17 @@ public sealed class RequireMerchantSignatureAttribute : Attribute, IAsyncResourc
         var protector = context.HttpContext.RequestServices.GetRequiredService<ISecretProtector>();
         var apiKeyHash = Convert.ToHexString(
             SHA256.HashData(Encoding.UTF8.GetBytes(apiKey))).ToLowerInvariant();
-        var merchant = await db.Merchants.FirstOrDefaultAsync(
-            m => m.ApiKeyHash == apiKeyHash && m.IsActive, ct);
+        // Authenticate ONLY against the revocable key table. The migration
+        // backfills each existing Merchant's original credentials as Primary.
+        // Falling back to Merchant.ApiKeyHash would resurrect revoked keys.
+        var credential = await db.MerchantApiKeys.AsNoTracking()
+            .Where(k => k.ApiKeyHash == apiKeyHash && k.RevokedAtUtc == null)
+            .Join(db.Merchants.AsNoTracking().Where(m => m.IsActive),
+                k => k.MerchantId, m => m.Id,
+                (k, m) => new { k.MerchantId, k.EncryptedSecret })
+            .SingleOrDefaultAsync(ct);
 
-        if (merchant is null)
+        if (credential is null)
         {
             context.Result = new UnauthorizedObjectResult(new { error = "Invalid merchant credentials." });
             return;
@@ -107,7 +114,7 @@ public sealed class RequireMerchantSignatureAttribute : Attribute, IAsyncResourc
         var queryString = request.QueryString.HasValue ? request.QueryString.Value : string.Empty;
         var canonical = $"{request.Method.ToUpperInvariant()}\n{request.Path}\n{queryString}\n{timestampEpoch}\n{nonce}\n{bodyHash}";
 
-        var secret = protector.Decrypt(merchant.EncryptedApiKeySecret);
+        var secret = protector.Decrypt(credential.EncryptedSecret);
         using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(secret));
         var expected = hmac.ComputeHash(Encoding.UTF8.GetBytes(canonical));
         byte[] provided;
@@ -131,13 +138,13 @@ public sealed class RequireMerchantSignatureAttribute : Attribute, IAsyncResourc
         // A rejected signature must not consume a nonce. The unique database
         // key closes the race between parallel requests with the same nonce.
         if (await db.MerchantNonces.AnyAsync(
-            n => n.MerchantId == merchant.Id && n.Nonce == nonce, ct))
+            n => n.MerchantId == credential.MerchantId && n.Nonce == nonce, ct))
         {
             context.Result = new ConflictObjectResult(new { error = "Replay detected: Nonce has already been used." });
             return;
         }
 
-        db.MerchantNonces.Add(new MerchantNonce(merchant.Id, nonce, TimeSpan.FromMinutes(10)));
+        db.MerchantNonces.Add(new MerchantNonce(credential.MerchantId, nonce, TimeSpan.FromMinutes(10)));
         try
         {
             await db.SaveChangesAsync(ct);
@@ -148,7 +155,7 @@ public sealed class RequireMerchantSignatureAttribute : Attribute, IAsyncResourc
             return;
         }
 
-        context.HttpContext.Items["MerchantId"] = merchant.Id;
+        context.HttpContext.Items["MerchantId"] = credential.MerchantId;
         await next();
     }
 
