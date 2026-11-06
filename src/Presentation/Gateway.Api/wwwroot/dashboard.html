@@ -11,6 +11,12 @@
         .btn { background: #238636; color: white; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-weight: 600; }
         .btn:hover { background: #2ea043; }
         .btn-danger { background: #da3633; }
+        .btn-secondary { background: #30363d; }
+        .btn-secondary:hover { background: #484f58; }
+        .subscription-heading { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; }
+        .subscription-grid { margin-top: 18px; margin-bottom: 12px; }
+        .subscription-value { font-size: 20px; font-weight: 650; margin: 10px 0; overflow-wrap: anywhere; }
+        .subscription-note { color: #8b949e; font-size: 13px; margin: 6px 0 0; }
         .btn-danger:hover { background: #f85149; }
         .card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 20px; margin-bottom: 20px; }
         .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 24px; }
@@ -66,6 +72,36 @@
         </div>
     </div>
 
+    <section class="card" aria-labelledby="subscriptionHeading">
+        <div class="subscription-heading">
+            <h3 id="subscriptionHeading" style="margin:0;">Plan &amp; Current Usage</h3>
+            <button type="button" class="btn btn-secondary" onclick="loadSubscription()">Refresh usage</button>
+        </div>
+        <p id="subscriptionError" class="error hidden" role="alert"></p>
+        <div class="stats-grid subscription-grid">
+            <div class="stat-box">
+                <div class="stat-label">Plan</div>
+                <div class="subscription-value" id="subscriptionPlan">-</div>
+            </div>
+            <div class="stat-box">
+                <div class="stat-label">Subscription</div>
+                <div class="subscription-value" id="subscriptionStatus">-</div>
+            </div>
+            <div class="stat-box">
+                <div class="stat-label">Invoice quota (used / limit)</div>
+                <div class="subscription-value" id="subscriptionInvoices">-</div>
+                <div class="stat-label" id="subscriptionInvoicesRemaining"></div>
+            </div>
+            <div class="stat-box">
+                <div class="stat-label">USD volume (used / limit)</div>
+                <div class="subscription-value" id="subscriptionVolume">-</div>
+                <div class="stat-label" id="subscriptionVolumeRemaining"></div>
+            </div>
+        </div>
+        <p class="subscription-note">Next usage reset: <strong id="subscriptionResetDate">-</strong></p>
+        <p class="subscription-note">Usage resets do not indicate a subscription renewal or payment.</p>
+    </section>
+
     <div class="card">
         <h3 style="margin-top: 0;">Recent Invoices</h3>
         <table>
@@ -96,6 +132,7 @@
                 document.getElementById('loginView').classList.add('hidden');
                 document.getElementById('dashboardView').classList.remove('hidden');
                 loadOverview();
+                loadSubscription();
             } else {
                 showLogin();
             }
@@ -139,6 +176,7 @@
     function showLogin() {
         document.getElementById('dashboardView').classList.add('hidden');
         document.getElementById('loginView').classList.remove('hidden');
+        resetSubscriptionDisplay();
     }
 
     async function loadOverview() {
@@ -172,6 +210,70 @@
             }
         } catch (e) {
             console.error("Failed to load overview", e);
+        }
+    }
+
+
+    const subscriptionStatusNames = { 1: 'Active', 2: 'Past Due', 3: 'Cancelled' };
+    const subscriptionFields = [
+        'subscriptionPlan', 'subscriptionStatus', 'subscriptionInvoices',
+        'subscriptionInvoicesRemaining', 'subscriptionVolume',
+        'subscriptionVolumeRemaining', 'subscriptionResetDate'
+    ];
+
+    function resetSubscriptionDisplay() {
+        subscriptionFields.forEach(id => {
+            document.getElementById(id).textContent = '-';
+        });
+        const error = document.getElementById('subscriptionError');
+        error.textContent = '';
+        error.classList.add('hidden');
+    }
+
+    async function loadSubscription() {
+        resetSubscriptionDisplay();
+        const error = document.getElementById('subscriptionError');
+        try {
+            const response = await fetch(API_BASE + '/dashboard/subscription', {
+                credentials: 'include',
+                cache: 'no-store'
+            });
+            if (!response.ok) {
+                if (response.status === 401 || response.status === 403) {
+                    showLogin();
+                    return;
+                }
+                throw new Error(response.status === 404
+                    ? 'No subscription has been assigned to this merchant.'
+                    : 'Unable to load subscription details.');
+            }
+            const data = await response.json();
+            // SubscriptionStatus is serialized as an integer by the current API.
+            // Accept a string if the API later enables string enum conversion.
+            const status = subscriptionStatusNames[data.status] || String(data.status ?? 'Unknown');
+            const usedInvoices = Number(data.currentPeriodInvoiceCount);
+            const invoiceLimit = Number(data.effectiveMonthlyInvoiceLimit);
+            const usedVolume = Number(data.currentPeriodVolumeUsd);
+            const volumeLimit = Number(data.effectiveMonthlyVolumeLimitUsd);
+            const fmt = n => n.toLocaleString(undefined, { maximumFractionDigits: 2 });
+
+            document.getElementById('subscriptionPlan').textContent = String(data.planName ?? '-');
+            document.getElementById('subscriptionStatus').textContent = status;
+            document.getElementById('subscriptionInvoices').textContent =
+                usedInvoices.toLocaleString() + ' / ' + invoiceLimit.toLocaleString();
+            document.getElementById('subscriptionInvoicesRemaining').textContent =
+                Math.max(0, Number(data.remainingInvoices)).toLocaleString() + ' invoices remaining';
+            document.getElementById('subscriptionVolume').textContent =
+                fmt(usedVolume) + ' / ' + (volumeLimit === 0 ? 'Unlimited' : fmt(volumeLimit)) + ' USD';
+            document.getElementById('subscriptionVolumeRemaining').textContent =
+                data.remainingVolumeUsd == null ? 'Unlimited volume' :
+                fmt(Math.max(0, Number(data.remainingVolumeUsd))) + ' USD remaining';
+            const resetDate = new Date(data.currentPeriodEndUtc);
+            document.getElementById('subscriptionResetDate').textContent =
+                Number.isNaN(resetDate.getTime()) ? 'Unavailable' : resetDate.toLocaleString();
+        } catch (e) {
+            error.textContent = e.message || 'Unable to load subscription details.';
+            error.classList.remove('hidden');
         }
     }
 

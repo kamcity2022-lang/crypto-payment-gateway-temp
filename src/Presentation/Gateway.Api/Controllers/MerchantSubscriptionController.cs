@@ -36,6 +36,7 @@ public sealed class MerchantSubscriptionController : ControllerBase
             .ThenByDescending(s => s.Id)
             .FirstOrDefaultAsync(ct);
 
+        Response.Headers.CacheControl = "no-store";
         return subscription is null
             ? NotFound(new { error = "SUBSCRIPTION_NOT_FOUND" })
             : Ok(SubscriptionResponseDto.From(subscription, subscription.Plan));
