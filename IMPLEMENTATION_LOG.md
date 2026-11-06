@@ -158,3 +158,16 @@
 - Dashboard supports owner team operations and one-time invitation token presentation.
 - Integration tests cover role/tenant restrictions, token metadata and role changes.
 - A transactional outbox/email sender, CSRF protection, rate limits and comprehensive audit are still required before production launch.
+
+## Phase 2 — Merchant Webhook Dashboard
+**Status:** Draft PR, pending CI.
+
+- Cookie-authenticated Merchant-scoped webhook configuration; GET and Update of default HTTPS endpoint.
+- SSRF URL validation including loopback, private addresses, URL credentials and fragments.
+- Lists real invoice events and merchant-scoped test webhooks with status/attempt/error, filters and pagination.
+- Owner/Admin can enqueue test delivery and redeliver completed/exhausted events; Viewer read-only.
+- Redelivery uses atomic conditional update and refuses already queued or actively leased events.
+- Dashboard exposes settings, test delivery, event history and manual retry controls using DOM textContent.
+- HTTP/PostgreSQL integration coverage for tenant isolation, permissions, invalid URLs, event history, and retry deduplication.
+- Existing HMAC merchant integration endpoints remain available for backward compatibility.
+- Cookie CSRF prevention, outbound event retention and full audit logging remain deferred production gates.
