@@ -41,6 +41,10 @@ public sealed class MerchantApiKeyHttpIntegrationTests : IAsyncLifetime
         _factory = new TestWebApplicationFactory(_postgres.GetConnectionString())
             .WithWebHostBuilder(b => b.ConfigureTestServices(s =>
                 s.AddSingleton<IExchangeRateProvider>(new FixedTestRateProvider())));
+        // Start the hosted API so Program.cs applies migrations before
+        // we seed merchant rows using an independent DbContext.
+        using var startup = _factory.CreateClient(
+            new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
         await using (var db = NewDb())
         {
             _merchant = Guid.NewGuid();
