@@ -54,3 +54,18 @@
 - Real HTTP authorization tests and PostgreSQL/Testcontainers integration coverage added.
 - No migrations, billing integration, new frontend UI, or new packages.
 - Build/tests must be verified via GitHub Actions before merging.
+
+## Phase 2 — Task 5.4: Merchant Subscription Management
+**Date:** 2026-11-06
+**Status:** Implementation pushed; pending CI verification.
+
+- SuperAdmin endpoints for merchant subscription details/history, manual assignment, plan change, custom limit overrides and cancellation.
+- MerchantViewer endpoint for tenant-scoped subscription details and effective quota.
+- Merchant row lock serializes subscription mutations; database partial unique index still prevents multiple active subscriptions.
+- Plan changes retain usage counters and period timestamps; new subscriptions after cancellation retain historical records.
+- Plan deactivation check uses a row lock; assignment to inactive plans is rejected.
+- Bootstrap only provisions merchants with no subscription history, so cancelled merchants are not silently reactivated on service restart.
+- No checkout, automated billing, new frontend UI or migrations.
+- Real HTTP/PostgreSQL tests cover authorization, tenant isolation, concurrency, lifecycle, quota display and failure cases.
+
+**Verification:** GitHub Actions must pass before merging. .NET SDK/Docker unavailable in coding environment.
