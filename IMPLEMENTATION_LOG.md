@@ -91,3 +91,15 @@
 - Preserve existing canonical string (method, raw path/query, timestamp, nonce, raw-byte body hash) and DB nonce uniqueness.
 - Real HTTP/PostgreSQL integration tests: valid body signature, empty-body signature bypass attempt, body/query tampering, replayed nonce, extreme timestamp and oversized body.
 - Existing scanner, finality, outbox and webhook E2E tests remain covered by CI. No unrelated changes.
+
+## P0.3b — Atomic Blockchain Scanner Recovery
+**Status:** Draft PR pending CI.
+
+- Transaction-scoped PostgreSQL advisory lock serializes scanner cycles across replicas.
+- Transfers, invoice state, outbox events and cursor updates commit together.
+- Abort and roll back a scan if TronGrid API responds with an error, receipt verification is unavailable, or the transaction is not yet solidified.
+- Permanently invalid solidified receipt/log entries remain ignored.
+- Reject receipts whose block number is beyond the current solidified head.
+- Clear EF tracking after a rolled-back cycle to prevent dirty entities surviving the next loop.
+- Retains existing idempotency unique index and webhook behavior.
+- Follow-up operational task: monitor scan lag/provider outages and review transaction duration under production load.
