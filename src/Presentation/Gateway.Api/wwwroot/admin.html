@@ -45,6 +45,8 @@
         .checkbox-line { display:flex; align-items:center; gap:8px; margin:6px 0 18px; font-size:14px; }
         .modal-content { max-height:80vh; overflow-y:auto; }
         .btn:disabled { opacity:0.45; cursor:not-allowed; }
+        .subscription-section { border-top:1px solid #30363d; padding-top:12px; margin-top:20px; }
+        .subscription-stat { font-size:17px; overflow-wrap:anywhere; }
         .credentials-box { background: #0d1117; padding: 16px; border-radius: 6px; border: 1px solid #30363d; font-family: monospace; font-size: 12px; word-break: break-all; margin: 12px 0; }
     </style>
 </head>
@@ -137,6 +139,54 @@
     </div>
 </div>
 
+
+
+<!-- Merchant Subscription Management -->
+<div id="subscriptionManagerModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="subscriptionManagerTitle">
+    <div class="modal-content">
+        <button class="close" type="button" aria-label="Close subscription manager" onclick="closeSubscriptionManager()">&times;</button>
+        <h3 id="subscriptionManagerTitle">Merchant Subscription</h3>
+        <p class="hint" id="subscriptionMerchantLabel">-</p>
+        <p class="hint">These are manual administration actions. A usage period does not confirm billing or payment.</p>
+        <p id="subscriptionManagerError" class="error hidden" role="alert"></p>
+        <div class="stats-grid" style="margin-top:18px;">
+            <div class="stat-box"><div class="stat-label">Current plan</div><div id="subCurrentPlan" class="stat-value subscription-stat">-</div></div>
+            <div class="stat-box"><div class="stat-label">Subscription status</div><div id="subCurrentStatus" class="stat-value subscription-stat">-</div></div>
+            <div class="stat-box"><div class="stat-label">Invoices (used / max)</div><div id="subInvoiceUsage" class="stat-value subscription-stat">-</div></div>
+            <div class="stat-box"><div class="stat-label">USD volume (used / max)</div><div id="subVolumeUsage" class="stat-value subscription-stat">-</div></div>
+        </div>
+        <p class="hint">Usage period: <span id="subPeriod">-</span></p>
+        <p class="hint">Custom overrides: <span id="subOverrides">-</span></p>
+        <section class="subscription-section">
+            <h4>Assign or change plan</h4>
+            <label for="subscriptionPlanSelect">Available active plan</label>
+            <select class="input" id="subscriptionPlanSelect"></select>
+            <button class="btn" id="subAssignButton" type="button" onclick="assignMerchantSubscription()">Assign subscription</button>
+            <button class="btn btn-warning hidden" id="subChangePlanButton" type="button" onclick="changeMerchantSubscriptionPlan()">Change plan</button>
+        </section>
+        <section id="subscriptionActiveControls" class="subscription-section hidden">
+            <h4>Custom monthly limits</h4>
+            <p class="hint">Leave a field blank to inherit the plan limit. Enter 0 for an explicit zero limit (for USD volume, 0 means unlimited).</p>
+            <label for="subscriptionInvoiceOverride">Invoice count override (optional)</label>
+            <input class="input" id="subscriptionInvoiceOverride" type="number" min="0" step="1" placeholder="Inherit plan limit">
+            <label for="subscriptionVolumeOverride">USD volume override (optional)</label>
+            <input class="input" id="subscriptionVolumeOverride" type="number" min="0" step="0.01" placeholder="Inherit plan limit">
+            <button type="button" class="btn" onclick="saveSubscriptionLimits()">Save overrides</button>
+            <button type="button" class="btn btn-secondary" onclick="clearSubscriptionLimits()">Clear overrides</button>
+            <hr style="border:0;border-top:1px solid #30363d;margin:18px 0;">
+            <button type="button" class="btn btn-danger" onclick="cancelMerchantSubscription()">Cancel subscription</button>
+        </section>
+        <section class="subscription-section">
+            <h4>Subscription history</h4>
+            <div style="overflow-x:auto;">
+                <table>
+                    <thead><tr><th>Plan</th><th>Status</th><th>Started</th><th>Period end</th></tr></thead>
+                    <tbody id="subscriptionHistoryTable"><tr><td colspan="4">Loading...</td></tr></tbody>
+                </table>
+            </div>
+        </section>
+    </div>
+</div>
 
 <!-- Subscription Plan Editor -->
 <div id="planEditorModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="planEditorTitle">
@@ -266,6 +316,7 @@
         document.getElementById('planEditorModal').style.display = 'none';
         planCache = [];
         editingPlanId = null;
+        closeSubscriptionManager();
     }
 
     async function loadOverview() {
@@ -325,6 +376,7 @@
 <td>${escapeHtml(new Date(m.createdAtUtc).toLocaleDateString())}</td>
 <td>
 <button class="btn btn-secondary" onclick="viewMerchantDetails('${escapeHtml(m.merchantId)}')">Details</button>
+<button class="btn btn-secondary" onclick="openSubscriptionManager('${escapeHtml(m.merchantId)}')">Subscription</button>
 ${actionBtn}
 </td>
 </tr>
@@ -455,6 +507,7 @@ ${data.wallets.map(w => `
 ${walletsHtml}
 <div style="margin-top: 16px;">
 <button class="btn btn-secondary" onclick="generateInvite('${escapeHtml(data.merchantId)}')">Generate Invitation</button>
+<button class="btn btn-secondary" onclick="closeMerchantDetailsModal(); openSubscriptionManager('${escapeHtml(data.merchantId)}')">Subscription</button>
 </div>
 <div id="inviteResult" class="hidden" style="margin-top: 16px;"></div>
 `;
@@ -571,7 +624,9 @@ ${walletsHtml}
     }
 
     window.onclick = function(event) {
-        if (event.target.classList.contains('modal')) {
+        if (event.target.id === 'subscriptionManagerModal') {
+            closeSubscriptionManager();
+        } else if (event.target.classList.contains('modal')) {
             event.target.style.display = 'none';
         }
     }
@@ -739,6 +794,240 @@ ${walletsHtml}
         } catch (e) {
             planError(e.message || 'Unable to change plan status.');
         }
+    }
+
+
+
+    let subscriptionMerchantId = null;
+    let subscriptionRecord = null;
+    let subscriptionActivePlans = [];
+
+    function subscriptionError(message) {
+        const element = document.getElementById('subscriptionManagerError');
+        element.textContent = message;
+        element.classList.toggle('hidden', !message);
+    }
+
+    const subscriptionStatusNames = { 1: 'Active', 2: 'Past Due', 3: 'Cancelled' };
+    function subscriptionStatusName(status) {
+        return subscriptionStatusNames[status] || String(status ?? 'Unknown');
+    }
+
+    function subscriptionIsActive(record) {
+        return record && (record.status === 1 || record.status === 'Active');
+    }
+
+    function subscriptionDate(value) {
+        if (!value) return '-';
+        const date = new Date(value);
+        return Number.isNaN(date.getTime()) ? '-' : date.toLocaleString();
+    }
+
+    function subscriptionUsd(value) {
+        return Number(value || 0).toLocaleString(undefined, { maximumFractionDigits: 2 });
+    }
+
+    async function merchantSubscriptionRequest(path = '', options = {}) {
+        if (!subscriptionMerchantId) throw new Error('Choose a merchant first.');
+        const method = options.method || 'GET';
+        const response = await fetch(API_BASE + '/admin/merchants/' +
+            encodeURIComponent(subscriptionMerchantId) + '/subscription' + path, {
+            credentials: 'include', cache: 'no-store', ...options
+        });
+        if (response.status === 401 || response.status === 403) {
+            showLogin();
+            throw new Error('SuperAdmin access is required.');
+        }
+        if (method === 'GET' && path === '' && response.status === 404) {
+            const body = await response.json().catch(() => ({}));
+            if (body.error === 'SUBSCRIPTION_NOT_FOUND') return null;
+            throw new Error(body.error || 'Merchant not found.');
+        }
+        if (!response.ok) {
+            const body = await response.json().catch(() => ({}));
+            throw new Error(body.message || body.error || 'Subscription action failed (HTTP ' + response.status + ').');
+        }
+        return response.json();
+    }
+
+    async function openSubscriptionManager(merchantId) {
+        if (!/^[0-9a-f-]{36}$/i.test(merchantId)) return;
+        subscriptionMerchantId = merchantId;
+        subscriptionRecord = null;
+        document.getElementById('subscriptionMerchantLabel').textContent = 'Merchant ID: ' + merchantId;
+        document.getElementById('subscriptionManagerModal').style.display = 'block';
+        await refreshSubscriptionManager();
+    }
+
+    function closeSubscriptionManager() {
+        document.getElementById('subscriptionManagerModal').style.display = 'none';
+        subscriptionMerchantId = null;
+        subscriptionRecord = null;
+        subscriptionActivePlans = [];
+        document.getElementById('subscriptionHistoryTable').replaceChildren();
+        document.getElementById('subscriptionPlanSelect').replaceChildren();
+        document.getElementById('subscriptionInvoiceOverride').value = '';
+        document.getElementById('subscriptionVolumeOverride').value = '';
+        subscriptionError('');
+    }
+
+    async function refreshSubscriptionManager() {
+        const merchantId = subscriptionMerchantId;
+        if (!merchantId) return;
+        subscriptionError('');
+        try {
+            const [record, history, plans] = await Promise.all([
+                merchantSubscriptionRequest(),
+                merchantSubscriptionRequest('/history'),
+                planRequest('')
+            ]);
+            if (subscriptionMerchantId !== merchantId) return;
+            subscriptionRecord = record;
+            subscriptionActivePlans = plans.filter(p => p.isActive);
+            renderMerchantSubscription(record, history);
+        } catch (e) {
+            if (subscriptionMerchantId === merchantId)
+                subscriptionError(e.message || 'Unable to load subscription.');
+        }
+    }
+
+    function renderMerchantSubscription(record, history) {
+        const active = subscriptionIsActive(record);
+        document.getElementById('subCurrentPlan').textContent = record?.planName || 'Not assigned';
+        document.getElementById('subCurrentStatus').textContent = record
+            ? subscriptionStatusName(record.status) : 'None';
+        document.getElementById('subInvoiceUsage').textContent = record
+            ? String(record.currentPeriodInvoiceCount) + ' / ' + String(record.effectiveMonthlyInvoiceLimit)
+            : '-';
+        document.getElementById('subVolumeUsage').textContent = record
+            ? subscriptionUsd(record.currentPeriodVolumeUsd) + ' / ' +
+                (Number(record.effectiveMonthlyVolumeLimitUsd) === 0 ? 'Unlimited' : subscriptionUsd(record.effectiveMonthlyVolumeLimitUsd))
+            : '-';
+        document.getElementById('subPeriod').textContent = record
+            ? subscriptionDate(record.currentPeriodStartUtc) + ' — ' + subscriptionDate(record.currentPeriodEndUtc)
+            : '-';
+        document.getElementById('subOverrides').textContent = record
+            ? 'Invoices: ' + (record.customInvoiceLimit ?? 'Plan default') +
+                '; USD volume: ' + (record.customVolumeLimitUsd == null
+                    ? 'Plan default' : subscriptionUsd(record.customVolumeLimitUsd))
+            : '-';
+
+        const select = document.getElementById('subscriptionPlanSelect');
+        select.replaceChildren();
+        subscriptionActivePlans.forEach(plan => {
+            const option = document.createElement('option');
+            option.value = plan.id;
+            option.textContent = plan.name + ' (' + plan.monthlyInvoiceLimit + ' invoices / month)';
+            select.appendChild(option);
+        });
+        if (active && subscriptionActivePlans.some(p => p.id === record.planId))
+            select.value = record.planId;
+        select.disabled = subscriptionActivePlans.length === 0;
+        document.getElementById('subAssignButton').classList.toggle('hidden', active);
+        document.getElementById('subChangePlanButton').classList.toggle('hidden', !active);
+        document.getElementById('subAssignButton').disabled = select.disabled;
+        document.getElementById('subChangePlanButton').disabled = select.disabled;
+        document.getElementById('subscriptionActiveControls').classList.toggle('hidden', !active);
+        document.getElementById('subscriptionInvoiceOverride').value =
+            record?.customInvoiceLimit ?? '';
+        document.getElementById('subscriptionVolumeOverride').value =
+            record?.customVolumeLimitUsd ?? '';
+
+        const table = document.getElementById('subscriptionHistoryTable');
+        table.replaceChildren();
+        if (!history.length) {
+            const cell = table.insertRow().insertCell();
+            cell.colSpan = 4;
+            cell.textContent = 'No previous subscriptions.';
+        }
+        for (const item of history) {
+            const row = table.insertRow();
+            row.insertCell().textContent = item.planName;
+            row.insertCell().textContent = subscriptionStatusName(item.status);
+            row.insertCell().textContent = subscriptionDate(item.createdAtUtc);
+            row.insertCell().textContent = subscriptionDate(item.currentPeriodEndUtc);
+        }
+    }
+
+    async function applyMerchantSubscriptionAction(path, options, successLabel) {
+        const merchantId = subscriptionMerchantId;
+        if (!merchantId) return;
+        subscriptionError('');
+        try {
+            await merchantSubscriptionRequest(path, options);
+            if (subscriptionMerchantId === merchantId) {
+                await refreshSubscriptionManager();
+            }
+        } catch (e) {
+            if (subscriptionMerchantId === merchantId)
+                subscriptionError(e.message || successLabel + ' failed.');
+        }
+    }
+
+    function merchantSubscriptionJson(payload, method = 'PUT') {
+        return {
+            method,
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        };
+    }
+
+    async function assignMerchantSubscription() {
+        if (subscriptionIsActive(subscriptionRecord)) return;
+        const planId = document.getElementById('subscriptionPlanSelect').value;
+        const plan = subscriptionActivePlans.find(p => p.id === planId);
+        if (!plan) return subscriptionError('Select an active plan.');
+        if (!confirm('Assign the ' + plan.name + ' plan? A new active subscription will start with fresh quota. This does not collect payment.')) return;
+        await applyMerchantSubscriptionAction('/assign',
+            merchantSubscriptionJson({ planId }, 'POST'), 'Assign');
+    }
+
+    async function changeMerchantSubscriptionPlan() {
+        if (!subscriptionIsActive(subscriptionRecord)) return;
+        const planId = document.getElementById('subscriptionPlanSelect').value;
+        const plan = subscriptionActivePlans.find(p => p.id === planId);
+        if (!plan) return subscriptionError('Select an active plan.');
+        if (subscriptionRecord.planId === planId) return subscriptionError('That plan is already assigned.');
+        if (!confirm('Change this merchant to ' + plan.name +
+            '? Existing consumption and custom overrides will remain in place.')) return;
+        await applyMerchantSubscriptionAction('/plan',
+            merchantSubscriptionJson({ planId }), 'Change plan');
+    }
+
+    function readSubscriptionOverrides() {
+        const rawCount = document.getElementById('subscriptionInvoiceOverride').value.trim();
+        const rawVolume = document.getElementById('subscriptionVolumeOverride').value.trim();
+        const count = rawCount === '' ? null : Number(rawCount);
+        const volume = rawVolume === '' ? null : Number(rawVolume);
+        if ((count !== null && (!Number.isSafeInteger(count) || count < 0 || count > 2147483647)) ||
+            (volume !== null && (!Number.isFinite(volume) || volume < 0))) {
+            subscriptionError('Limits must be non-negative numbers; invoice limit must be an integer.');
+            return null;
+        }
+        return { customInvoiceLimit: count, customVolumeLimitUsd: volume };
+    }
+
+    async function saveSubscriptionLimits() {
+        if (!subscriptionIsActive(subscriptionRecord)) return;
+        const overrides = readSubscriptionOverrides();
+        if (!overrides) return;
+        if (!confirm('Update this merchant’s custom quota overrides?')) return;
+        await applyMerchantSubscriptionAction('/limits',
+            merchantSubscriptionJson(overrides), 'Update limits');
+    }
+
+    async function clearSubscriptionLimits() {
+        if (!subscriptionIsActive(subscriptionRecord)) return;
+        if (!confirm('Clear both overrides and restore the selected plan limits?')) return;
+        await applyMerchantSubscriptionAction('/limits',
+            merchantSubscriptionJson({ customInvoiceLimit: null, customVolumeLimitUsd: null }),
+            'Clear limits');
+    }
+
+    async function cancelMerchantSubscription() {
+        if (!subscriptionIsActive(subscriptionRecord)) return;
+        if (!confirm('Cancel the ACTIVE subscription? The merchant will no longer be able to create new invoices until a new active subscription is assigned.')) return;
+        await applyMerchantSubscriptionAction('/cancel', { method: 'POST' }, 'Cancel');
     }
 
 

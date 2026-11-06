@@ -94,6 +94,27 @@ public sealed class SubscriptionManagementHttpIntegrationTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task AdminHtml_ContainsMerchantSubscriptionManagementControls()
+    {
+        using var response = await _admin.GetAsync("/admin.html");
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var html = await response.Content.ReadAsStringAsync();
+        html.Should().Contain("id=\"subscriptionManagerModal\"");
+        html.Should().Contain("id=\"subscriptionPlanSelect\"");
+        html.Should().Contain("id=\"subscriptionInvoiceOverride\"");
+        html.Should().Contain("id=\"subscriptionVolumeOverride\"");
+        html.Should().Contain("id=\"subscriptionHistoryTable\"");
+        html.Should().Contain("openSubscriptionManager(");
+        html.Should().Contain("assignMerchantSubscription()");
+        html.Should().Contain("changeMerchantSubscriptionPlan()");
+        html.Should().Contain("saveSubscriptionLimits()");
+        html.Should().Contain("clearSubscriptionLimits()");
+        html.Should().Contain("cancelMerchantSubscription()");
+        html.Should().Contain("'/admin/merchants/'");
+        html.Should().Contain("'/subscription' + path");
+    }
+
+    [Fact]
     public async Task GetMerchantView_UsesResolvedTenantAndShowsEffectiveQuota()
     {
         using var response = await _owner.GetAsync("/api/v1/dashboard/subscription");
