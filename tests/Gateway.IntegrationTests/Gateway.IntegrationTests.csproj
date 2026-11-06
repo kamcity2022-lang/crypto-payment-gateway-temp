@@ -23,6 +23,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\..\examples\merchant-integration\Gateway.MerchantIntegration.Example.csproj" />
     <ProjectReference Include="..\..\src\Presentation\Gateway.Api\Gateway.Api.csproj" />
     <ProjectReference Include="..\..\src\Infrastructure\Gateway.Persistence\Gateway.Persistence.csproj" />
   </ItemGroup>
