@@ -26,6 +26,9 @@ builder.Services.AddDbContext<GatewayDbContext>(options =>
 // 2. Identity Setup (Human Users) — SINGLE registration
 builder.Services.AddIdentity<ApplicationUser, IdentityRole>(options =>
 {
+    // Re-check security stamps on every request so role changes and
+    // disabled accounts invalidate existing Identity cookies immediately.
+    options.SecurityStampValidationInterval = TimeSpan.Zero;
     options.Password.RequireDigit = true;
     options.Password.RequireLowercase = true;
     options.Password.RequireUppercase = true;
