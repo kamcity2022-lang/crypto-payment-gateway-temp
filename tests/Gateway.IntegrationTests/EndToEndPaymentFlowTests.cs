@@ -31,10 +31,12 @@ public class EndToEndPaymentFlowTests : IAsyncLifetime
         private readonly ulong _solidifiedBlockNumber;
         private readonly Dictionary<string, string> _transactionResponses = new(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, string> _accountResponses = new(StringComparer.OrdinalIgnoreCase);
+        private readonly HashSet<string> _failReceiptOnce = new(StringComparer.OrdinalIgnoreCase);
 
         public TronGridMockHttpHandler(ulong solidifiedBlockNumber) => _solidifiedBlockNumber = solidifiedBlockNumber;
 
         public void AddTransactionResponse(string txHash, string responseJson) => _transactionResponses[txHash] = responseJson;
+        public void FailReceiptOnce(string txHash) => _failReceiptOnce.Add(txHash);
         public void AddAccountResponse(string address, string responseJson) => _accountResponses[address] = responseJson;
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
@@ -71,6 +73,10 @@ public class EndToEndPaymentFlowTests : IAsyncLifetime
                 if (doc.RootElement.TryGetProperty("value", out var v))
                 {
                     var hash = v.GetString();
+                    if (hash != null && _failReceiptOnce.Remove(hash))
+                    {
+                        return new HttpResponseMessage(HttpStatusCode.ServiceUnavailable);
+                    }
                     if (hash != null && _transactionResponses.TryGetValue(hash, out var r))
                     {
                         return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(r) };
@@ -244,6 +250,69 @@ public class EndToEndPaymentFlowTests : IAsyncLifetime
 
         var events = await _dbContext.OutboxEvents.AsNoTracking().Where(o => o.AggregateId == inv.Id).ToListAsync();
         events.Should().HaveCount(1);
+    }
+
+
+    [Fact]
+    public async Task Scanner_ProviderFailureAfterFirstTransfer_RollsBackAndRetriesWholePage()
+    {
+        var (merchant, wallet) = CreateMerchantAndWallet();
+        var invoice = CreateInvoice(merchant, wallet);
+        await _dbContext.SaveChangesAsync();
+
+        var firstTx = "scan-recovery-1";
+        var secondTx = "scan-recovery-2";
+        const long firstAmount = 5_000_000L;
+        const long secondAmount = 5_000_000L;
+        var contractHex = THex(UsdtContract);
+        var recipientHex = THex(ValidDepositAddress);
+
+        var handler = new TronGridMockHttpHandler(100_000_000UL);
+        handler.AddAccountResponse(ValidDepositAddress, JsonSerializer.Serialize(new
+        {
+            data = new[]
+            {
+                new { transaction_id = firstTx, to = ValidDepositAddress,
+                    from = "TFrom", value = firstAmount.ToString(), event_index = 0,
+                    block_timestamp = 1700000000L },
+                new { transaction_id = secondTx, to = ValidDepositAddress,
+                    from = "TFrom", value = secondAmount.ToString(), event_index = 0,
+                    block_timestamp = 1700000100L }
+            }
+        }));
+        handler.AddTransactionResponse(firstTx,
+            BuildReceiptResp(99_999_900UL, contractHex, recipientHex,
+                firstAmount.ToString("x"), 0));
+        handler.AddTransactionResponse(secondTx,
+            BuildReceiptResp(99_999_901UL, contractHex, recipientHex,
+                secondAmount.ToString("x"), 0));
+        handler.FailReceiptOnce(secondTx);
+
+        using var client = new HttpClient(handler);
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new[]
+        {
+            new KeyValuePair<string, string?>("Tron:UsdtContractAddress", UsdtContract)
+        }).Build();
+        var scanner = new TronScannerService(
+            _dbContext, client, config, NullLogger<TronScannerService>.Instance);
+
+        await scanner.ScanPendingDepositsAsync(CancellationToken.None);
+        (await _dbContext.PaymentTransfers.AsNoTracking()
+            .CountAsync(t => t.InvoiceId == invoice.Id)).Should().Be(0);
+        (await _dbContext.OutboxEvents.AsNoTracking()
+            .CountAsync(o => o.AggregateId == invoice.Id)).Should().Be(0);
+        (await _dbContext.BlockchainScanCursors.AsNoTracking()
+            .CountAsync(c => c.Address == ValidDepositAddress)).Should().Be(0);
+
+        await scanner.ScanPendingDepositsAsync(CancellationToken.None);
+        (await _dbContext.PaymentTransfers.AsNoTracking()
+            .CountAsync(t => t.InvoiceId == invoice.Id)).Should().Be(2);
+        var updated = await _dbContext.Invoices.AsNoTracking()
+            .SingleAsync(i => i.Id == invoice.Id);
+        updated.Status.Should().Be(InvoiceStatus.Paid);
+        updated.PaidAmountUnits.Should().Be(firstAmount + secondAmount);
+        (await _dbContext.OutboxEvents.AsNoTracking()
+            .CountAsync(o => o.AggregateId == invoice.Id)).Should().Be(2);
     }
 
     [Fact]

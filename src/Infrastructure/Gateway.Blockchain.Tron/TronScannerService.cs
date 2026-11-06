@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Linq;
+using System.Data;
 using System.Net.Http;
 using System.Text.Json;
 using System.Threading;
@@ -49,6 +50,14 @@ public class TronScannerService : ITronScannerService
             return;
         }
 
+        // Serialize scans across worker replicas and atomically persist
+        // transfers, invoice states, outbox events and scan cursors.
+        // If TronGrid fails mid-cycle, all changes are rolled back so the
+        // same page can be retried without missing a transfer.
+        await using var tx = await _dbContext.Database.BeginTransactionAsync(IsolationLevel.ReadCommitted, cancellationToken);
+        await _dbContext.Database.ExecuteSqlRawAsync(
+            "SELECT pg_advisory_xact_lock(6238975401203981)", cancellationToken);
+
         var now = DateTime.UtcNow;
         var lateDays = int.TryParse(_configuration["Tron:Scanner:LatePaymentRetentionDays"], out var l) ? l : 30;
         var overDays = int.TryParse(_configuration["Tron:Scanner:OverpaymentRetentionDays"], out var o) ? o : 7;
@@ -67,13 +76,20 @@ public class TronScannerService : ITronScannerService
 
         foreach (var invoice in invoices)
         {
-            await ScanInvoiceWithPaginationAsync(invoice, solidifiedBlockNumber, cancellationToken);
+            if (!await ScanInvoiceWithPaginationAsync(invoice, solidifiedBlockNumber, cancellationToken))
+            {
+                await tx.RollbackAsync(cancellationToken);
+                _dbContext.ChangeTracker.Clear();
+                _logger.LogWarning("TRON scan aborted; unresolved provider data will be retried on the next cycle.");
+                return;
+            }
         }
 
         await _dbContext.SaveChangesAsync(cancellationToken);
+        await tx.CommitAsync(cancellationToken);
     }
 
-    private async Task ScanInvoiceWithPaginationAsync(Invoice invoice, ulong solidifiedBlockNumber,
+    private async Task<bool> ScanInvoiceWithPaginationAsync(Invoice invoice, ulong solidifiedBlockNumber,
         CancellationToken ct)
     {
         var cursor = await _dbContext.BlockchainScanCursors
@@ -98,7 +114,7 @@ public class TronScannerService : ITronScannerService
 
             using var request = new HttpRequestMessage(HttpMethod.Get, url);
             using var response = await _httpClient.SendAsync(request, ct);
-            if (!response.IsSuccessStatusCode) return;
+            if (!response.IsSuccessStatusCode) return false;
 
             var json = await response.Content.ReadAsStringAsync(ct);
             using var doc = JsonDocument.Parse(json);
@@ -127,10 +143,17 @@ public class TronScannerService : ITronScannerService
 
                 var txDetail =
                     await VerifySolidifiedTransactionAsync(txHash, invoice.DepositAddress, amountUnits, eventIndex, ct);
-                if (!txDetail.IsSolidified || !txDetail.IsSuccess)
+                if (!txDetail.IsSolidified || txDetail.BlockNumber > solidifiedBlockNumber)
                 {
-                    _logger.LogWarning("Tx {TxHash} rejected: Solidified={S}, Success={OK}", txHash,
-                        txDetail.IsSolidified, txDetail.IsSuccess);
+                    // A missing/unavailable receipt or a not-yet-solidified
+                    // block must never advance the cursor past this transfer.
+                    return false;
+                }
+                if (!txDetail.IsSuccess)
+                {
+                    // A solidified transaction with a failed receipt, wrong
+                    // contract or invalid event is safely ignored.
+                    _logger.LogWarning("Tx {TxHash} rejected by solidified receipt validation.", txHash);
                     continue;
                 }
 
@@ -216,6 +239,7 @@ public class TronScannerService : ITronScannerService
                 cursor.SetFingerprint(null);
             }
         }
+        return true;
     }
 
     private async Task<ulong> GetSolidifiedBlockNumberAsync(CancellationToken ct)
