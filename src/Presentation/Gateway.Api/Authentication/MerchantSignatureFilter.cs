@@ -110,9 +110,18 @@ public sealed class RequireMerchantSignatureAttribute : Attribute, IAsyncResourc
         var secret = protector.Decrypt(merchant.EncryptedApiKeySecret);
         using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(secret));
         var expected = hmac.ComputeHash(Encoding.UTF8.GetBytes(canonical));
-        Span<byte> provided = stackalloc byte[32];
-        if (!Convert.TryFromHexString(signature, provided, out var decodedLength) ||
-            decodedLength != expected.Length ||
+        byte[] provided;
+        try
+        {
+            provided = Convert.FromHexString(signature);
+        }
+        catch (FormatException)
+        {
+            context.Result = new UnauthorizedObjectResult(new { error = "Invalid HMAC signature." });
+            return;
+        }
+
+        if (provided.Length != expected.Length ||
             !CryptographicOperations.FixedTimeEquals(provided, expected))
         {
             context.Result = new UnauthorizedObjectResult(new { error = "Invalid HMAC signature." });
