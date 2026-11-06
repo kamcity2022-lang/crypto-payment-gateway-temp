@@ -205,6 +205,18 @@
 - HTTP/PostgreSQL integration tests cover filtering, other-merchant isolation, invoice details and invalid query ranges; HTML smoke test checks controls.
 - Full operational audit/monitoring, docs and production security hardening remain before launch.
 
+## Phase 2 — Operational Audit (initial coverage)
+**Status:** Draft PR pending CI.
+
+- Append-only, secret-free audit metadata: actor, merchant, curated action, target type/ID, UTC timestamp.
+- Audit events are committed with their corresponding successful write for Plan, Subscription, API-key and Merchant Team lifecycle operations.
+- Owner-only tenant-scoped audit API and SuperAdmin global/merchant-filtered API; 20 most recent items displayed in each portal.
+- Audited API key rotation, revocation and team role/status changes are persisted in the same transaction.
+- Tests assert role restrictions, tenant isolation, event presence and absence of raw keys, secrets or descriptions.
+- Audit coverage is intentionally limited to the above administrative operations. Remaining invoice/settlement/authentication events, retention policy and tamper-resistant external export are later operational tasks.
+- CSRF, rate limiting, config-secret rotation and monitoring remain release gates before production.
+
+
 ## Phase 2 — Merchant Documentation and Operational Runbook
 **Status:** Draft PR pending CI.
 
@@ -214,3 +226,13 @@
 - Lists API/Worker env configuration names, .NET/Docker development commands, live TronGrid provider caveat, security/backup/monitoring/testnet release gates.
 - Existing docs/PROJECT_STATUS.md is marked as historical rather than current.
 - PR #15 Audit remains separate and unmerged in master at time this documentation was authored.
+
+## P0 — Explicit TRON Network Selection (Nile/Shasta/Mainnet)
+**Status:** Draft PR pending CI.
+
+- Scanner and Sweep no longer embed live TronGrid endpoint URLs; instead select fixed documented hosts for Mainnet, Nile and Shasta.
+- Mandatory Tron:Network and Tron:UsdtContractAddress; explicit Tron:EnableMainnet=true to access Mainnet; fail closed on missing/unknown network.
+- Canonical Mainnet USDT contract is required on Mainnet and rejected for testnet, but a valid testnet token contract/decimals still must be independently verified.
+- Worker validates network config during startup; existing simulated receipt tests opt into explicitly mocked Mainnet routing.
+- Focused tests verify host selection, Mainnet opt-in, denied cross-network contracts and outbound request routing.
+- IMPORTANT: Database schema is not network-separated. Each testnet deployment MUST use isolated DB/wallets/keys and must not reuse mainnet invoices; immutable network DB binding is a remaining production gate.
