@@ -39,6 +39,12 @@
         .modal-content { background: #161b22; margin: 5% auto; padding: 24px; border: 1px solid #30363d; border-radius: 8px; width: 80%; max-width: 600px; }
         .close { color: #8b949e; float: right; font-size: 28px; font-weight: bold; cursor: pointer; }
         .close:hover { color: #e6edf3; }
+        .section-header { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; }
+        .section-header > div { display:flex; gap:8px; flex-wrap:wrap; }
+        .hint { font-size:13px; color:#8b949e; margin-top:14px; }
+        .checkbox-line { display:flex; align-items:center; gap:8px; margin:6px 0 18px; font-size:14px; }
+        .modal-content { max-height:80vh; overflow-y:auto; }
+        .btn:disabled { opacity:0.45; cursor:not-allowed; }
         .credentials-box { background: #0d1117; padding: 16px; border-radius: 6px; border: 1px solid #30363d; font-family: monospace; font-size: 12px; word-break: break-all; margin: 12px 0; }
     </style>
 </head>
@@ -82,6 +88,25 @@
         </div>
     </div>
 
+
+    <section class="card" aria-labelledby="plansHeading">
+        <div class="section-header">
+            <h3 id="plansHeading" style="margin:0;">Subscription Plans</h3>
+            <div>
+                <button type="button" class="btn btn-secondary" onclick="loadPlans()">Refresh plans</button>
+                <button type="button" class="btn" onclick="openPlanEditor()">+ New Plan</button>
+            </div>
+        </div>
+        <p class="hint">A plan with USD volume limit 0 has unlimited volume. Updating a plan affects existing subscriptions; selecting a default affects newly created merchants.</p>
+        <p id="plansError" class="error hidden" role="alert"></p>
+        <div style="overflow-x:auto;">
+            <table>
+                <thead><tr><th>Name</th><th>Invoice limit / month</th><th>Volume USD / month</th><th>Price USD</th><th>Status</th><th>Actions</th></tr></thead>
+                <tbody id="plansTable"><tr><td colspan="6">Loading...</td></tr></tbody>
+            </table>
+        </div>
+    </section>
+
     <div class="card">
         <h3 style="margin-top: 0;">Merchant Management</h3>
         <div class="filter-bar">
@@ -109,6 +134,33 @@
             </tbody>
         </table>
         <div class="pagination" id="pagination"></div>
+    </div>
+</div>
+
+
+<!-- Subscription Plan Editor -->
+<div id="planEditorModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="planEditorTitle">
+    <div class="modal-content">
+        <button type="button" class="close" onclick="closePlanEditor()" aria-label="Close plan editor">&times;</button>
+        <h3 id="planEditorTitle">Create Plan</h3>
+        <p id="planEditorError" class="error hidden" role="alert"></p>
+        <form id="planEditorForm" onsubmit="savePlan(event)">
+            <label for="planName">Plan name</label>
+            <input class="input" id="planName" required maxlength="50" autocomplete="off">
+            <label for="planDescription">Description</label>
+            <input class="input" id="planDescription" maxlength="255" autocomplete="off">
+            <label for="planInvoiceLimit">Maximum invoices per month</label>
+            <input class="input" id="planInvoiceLimit" type="number" min="1" step="1" required>
+            <label for="planVolumeLimit">Monthly USD volume limit (0 = unlimited)</label>
+            <input class="input" id="planVolumeLimit" type="number" min="0" step="0.01" required>
+            <label for="planPrice">Plan price in USD</label>
+            <input class="input" id="planPrice" type="number" min="0" step="0.01" required>
+            <label id="planDefaultOption" class="checkbox-line">
+                <input id="planIsDefault" type="checkbox"> Set as the default for new merchants
+            </label>
+            <button class="btn" id="planSaveButton" type="submit">Save plan</button>
+            <button class="btn btn-secondary" type="button" onclick="closePlanEditor()">Cancel</button>
+        </form>
     </div>
 </div>
 
@@ -167,6 +219,7 @@
                 document.getElementById('adminView').classList.remove('hidden');
                 loadOverview();
                 loadMerchants();
+                loadPlans();
             } else if (res.status === 401 || res.status === 403) {
                 showLogin();
             }
@@ -209,6 +262,10 @@
     function showLogin() {
         document.getElementById('adminView').classList.add('hidden');
         document.getElementById('loginView').classList.remove('hidden');
+        document.getElementById('plansTable').replaceChildren();
+        document.getElementById('planEditorModal').style.display = 'none';
+        planCache = [];
+        editingPlanId = null;
     }
 
     async function loadOverview() {
@@ -518,6 +575,172 @@ ${walletsHtml}
             event.target.style.display = 'none';
         }
     }
+
+
+    let planCache = [];
+    let editingPlanId = null;
+
+    function planError(message, editor = false) {
+        const element = document.getElementById(editor ? 'planEditorError' : 'plansError');
+        element.textContent = message;
+        element.classList.toggle('hidden', !message);
+    }
+
+    async function planRequest(path, options = {}) {
+        const response = await fetch(API_BASE + '/admin/plans' + path, {
+            credentials: 'include', cache: 'no-store', ...options
+        });
+        if (response.status === 401 || response.status === 403) {
+            showLogin();
+            throw new Error('The SuperAdmin session is no longer authorized.');
+        }
+        if (!response.ok) {
+            const body = await response.json().catch(() => ({}));
+            throw new Error(body.message || body.error || 'Plan operation failed (HTTP ' + response.status + ').');
+        }
+        return response.json();
+    }
+
+    function addPlanButton(cell, title, action, variant = 'btn-secondary', disabled = false) {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'btn ' + variant;
+        button.style.marginRight = '6px';
+        button.style.marginBottom = '4px';
+        button.textContent = title;
+        button.disabled = disabled;
+        button.addEventListener('click', action);
+        cell.appendChild(button);
+    }
+
+    async function loadPlans() {
+        planError('');
+        const table = document.getElementById('plansTable');
+        table.replaceChildren();
+        try {
+            const plans = await planRequest('');
+            planCache = plans;
+            if (!plans.length) {
+                const cell = table.insertRow().insertCell();
+                cell.colSpan = 6;
+                cell.textContent = 'No subscription plans found.';
+                return;
+            }
+            const money = value => Number(value).toLocaleString(undefined, {
+                minimumFractionDigits: 2, maximumFractionDigits: 2
+            });
+            for (const p of plans) {
+                const row = table.insertRow();
+                row.insertCell().textContent = p.name + (p.isDefault ? ' (Default)' : '');
+                row.insertCell().textContent = String(p.monthlyInvoiceLimit);
+                row.insertCell().textContent = Number(p.monthlyVolumeLimitUsd) === 0
+                    ? 'Unlimited' : money(p.monthlyVolumeLimitUsd);
+                row.insertCell().textContent = money(p.priceUsd);
+                const status = row.insertCell();
+                status.textContent = p.isActive ? 'Active' : 'Inactive';
+                status.className = p.isActive ? 'status-active' : 'status-inactive';
+                const actions = row.insertCell();
+                addPlanButton(actions, 'Edit', () => openPlanEditor(p.id));
+                if (p.isActive && !p.isDefault) {
+                    addPlanButton(actions, 'Make default', () => changePlanState(p, 'set-default'), 'btn-warning');
+                }
+                if (p.isActive) {
+                    addPlanButton(actions, 'Deactivate', () => changePlanState(p, 'deactivate'),
+                        'btn-danger', p.isDefault);
+                } else {
+                    addPlanButton(actions, 'Activate', () => changePlanState(p, 'activate'));
+                }
+            }
+        } catch (e) {
+            planError(e.message || 'Failed to load plans.');
+        }
+    }
+
+    function openPlanEditor(id = null) {
+        const existing = id ? planCache.find(p => p.id === id) : null;
+        if (id && !existing) return planError('Plan no longer available. Refresh the list.');
+        editingPlanId = existing ? existing.id : null;
+        document.getElementById('planEditorTitle').textContent = existing ? 'Edit Plan' : 'Create Plan';
+        document.getElementById('planEditorForm').reset();
+        document.getElementById('planName').value = existing?.name || '';
+        document.getElementById('planDescription').value = existing?.description || '';
+        document.getElementById('planInvoiceLimit').value = existing?.monthlyInvoiceLimit ?? 100;
+        document.getElementById('planVolumeLimit').value = existing?.monthlyVolumeLimitUsd ?? 0;
+        document.getElementById('planPrice').value = existing?.priceUsd ?? 0;
+        document.getElementById('planDefaultOption').classList.toggle('hidden', !!existing);
+        document.getElementById('planIsDefault').checked = false;
+        document.getElementById('planSaveButton').disabled = false;
+        planError('', true);
+        document.getElementById('planEditorModal').style.display = 'block';
+        document.getElementById('planName').focus();
+    }
+
+    function closePlanEditor() {
+        document.getElementById('planEditorModal').style.display = 'none';
+        editingPlanId = null;
+        planError('', true);
+    }
+
+    async function savePlan(event) {
+        event.preventDefault();
+        const name = document.getElementById('planName').value.trim();
+        const description = document.getElementById('planDescription').value.trim();
+        const monthlyInvoiceLimit = Number(document.getElementById('planInvoiceLimit').value);
+        const monthlyVolumeLimitUsd = Number(document.getElementById('planVolumeLimit').value);
+        const priceUsd = Number(document.getElementById('planPrice').value);
+        const isDefault = !editingPlanId && document.getElementById('planIsDefault').checked;
+        if (!name || name.length > 50 || description.length > 255 ||
+            !Number.isSafeInteger(monthlyInvoiceLimit) || monthlyInvoiceLimit < 1 ||
+            !Number.isFinite(monthlyVolumeLimitUsd) || monthlyVolumeLimitUsd < 0 ||
+            !Number.isFinite(priceUsd) || priceUsd < 0) {
+            return planError('Check the plan name, invoice limit, USD volume limit, and price.', true);
+        }
+        const original = editingPlanId ? planCache.find(p => p.id === editingPlanId) : null;
+        if (original && !confirm('Update this plan? Changes to its limits affect existing subscriptions.')) return;
+        if (isDefault && !confirm('Make this the default plan for newly created merchants?')) return;
+
+        const button = document.getElementById('planSaveButton');
+        button.disabled = true;
+        planError('', true);
+        try {
+            const payload = {
+                name, description, monthlyInvoiceLimit, monthlyVolumeLimitUsd, priceUsd
+            };
+            if (!editingPlanId) payload.isDefault = isDefault;
+            await planRequest(editingPlanId ? '/' + editingPlanId : '', {
+                method: editingPlanId ? 'PUT' : 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            closePlanEditor();
+            await loadPlans();
+        } catch (e) {
+            planError(e.message || 'Unable to save plan.', true);
+        } finally {
+            button.disabled = false;
+        }
+    }
+
+    async function changePlanState(p, operation) {
+        if (operation === 'deactivate' && p.isDefault)
+            return planError('Default plan cannot be deactivated. Select another default first.');
+        const message = operation === 'set-default'
+            ? 'Make ' + p.name + ' the new default for future merchant registrations?'
+            : operation === 'deactivate'
+                ? 'Deactivate ' + p.name + '? Existing subscriptions remain unchanged.'
+                : 'Reactivate ' + p.name + '?';
+        if (!confirm(message)) return;
+        planError('');
+        try {
+            await planRequest('/' + encodeURIComponent(p.id) + '/' + operation, {
+                method: 'POST'
+            });
+            await loadPlans();
+        } catch (e) {
+            planError(e.message || 'Unable to change plan status.');
+        }
+    }
+
 
     checkAuth();
 </script>

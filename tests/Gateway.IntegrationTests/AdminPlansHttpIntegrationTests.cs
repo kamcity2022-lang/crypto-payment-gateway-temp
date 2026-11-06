@@ -75,6 +75,23 @@ public sealed class AdminPlansHttpIntegrationTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task SuperAdminHtml_ExposesPlanManagementControls_AndExistingApiRoutes()
+    {
+        using var response = await _admin.GetAsync("/admin.html");
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var html = await response.Content.ReadAsStringAsync();
+        html.Should().Contain("Subscription Plans");
+        html.Should().Contain("id=\"plansTable\"");
+        html.Should().Contain("id=\"planEditorForm\"");
+        html.Should().Contain("loadPlans()");
+        html.Should().Contain("openPlanEditor(");
+        html.Should().Contain("savePlan(event)");
+        html.Should().Contain("set-default");
+        html.Should().Contain("deactivate");
+        html.Should().Contain("API_BASE + '/admin/plans'");
+    }
+
+    [Fact]
     public async Task Create_AndReadListAndDetail_Works()
     {
         var plan = await CreateAsync("Business");
