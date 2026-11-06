@@ -62,6 +62,25 @@ public class Subscription
         CurrentPeriodVolumeUsd += fiatAmountUsd;
     }
 
+    public void ChangePlan(Guid planId)
+    {
+        if (planId == Guid.Empty)
+            throw new ArgumentException("Plan ID cannot be empty.", nameof(planId));
+        if (Status != SubscriptionStatus.Active)
+            throw new InvalidOperationException("Only active subscriptions can change plans.");
+
+        PlanId = planId;
+        // The current billing period, consumed quota and overrides are retained.
+    }
+
+    public void Cancel()
+    {
+        if (Status != SubscriptionStatus.Active)
+            throw new InvalidOperationException("Only active subscriptions can be cancelled.");
+
+        Status = SubscriptionStatus.Cancelled;
+    }
+
     public void OverrideLimits(int? customInvoiceLimit, decimal? customVolumeLimitUsd)
     {
         if (customInvoiceLimit.HasValue && customInvoiceLimit.Value < 0)

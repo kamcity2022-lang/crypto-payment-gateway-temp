@@ -66,7 +66,8 @@ public class SuperAdminBootstrapService : IHostedService
             _logger.LogInformation("Bootstrap: Default 'Starter' plan created.");
         }
 
-        // STEP 1.6: Ensure all existing merchants have an active subscription (idempotent)
+        // STEP 1.6: Assign default only to merchants who have NEVER had a subscription.
+        // Do not silently reactivate deliberately cancelled or PastDue merchants on restart.
         var defaultPlan = await dbContext.Plans
             .FirstOrDefaultAsync(p => p.IsDefault && p.IsActive, cancellationToken);
         
@@ -74,7 +75,7 @@ public class SuperAdminBootstrapService : IHostedService
         {
             var merchantsWithoutSubscription = await dbContext.Merchants
                 .Where(m => !dbContext.Subscriptions.Any(s => 
-                    s.MerchantId == m.Id && s.Status == SubscriptionStatus.Active))
+                    s.MerchantId == m.Id))
                 .Select(m => m.Id)
                 .ToListAsync(cancellationToken);
 
