@@ -3,6 +3,7 @@ using System.Data;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Gateway.Api.Auditing;
 using Gateway.Application.DTOs;
 using Gateway.Domain.Entities;
 using Gateway.Domain.Enums;
@@ -84,6 +85,7 @@ public sealed class AdminSubscriptionsController : ControllerBase
         // subscription was cancelled or marked PastDue; history is retained.
         var subscription = new Subscription(merchantId, plan.Id);
         _db.Subscriptions.Add(subscription);
+        AuditTrail.Record(_db, User, merchantId, "subscription.assigned", "Subscription", subscription.Id.ToString());
         await _db.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);
 
@@ -114,6 +116,7 @@ public sealed class AdminSubscriptionsController : ControllerBase
         // plans must never give the merchant free quota by resetting counters.
         // Explicit merchant-specific limits remain until cleared separately.
         subscription.ChangePlan(plan.Id);
+        AuditTrail.Record(_db, User, merchantId, "subscription.plan_changed", "Subscription", subscription.Id.ToString());
         await _db.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);
         return Ok(SubscriptionResponseDto.From(subscription, plan));
@@ -132,6 +135,7 @@ public sealed class AdminSubscriptionsController : ControllerBase
             return Conflict(new { error = "ACTIVE_SUBSCRIPTION_REQUIRED" });
 
         subscription.OverrideLimits(request.CustomInvoiceLimit, request.CustomVolumeLimitUsd);
+        AuditTrail.Record(_db, User, merchantId, "subscription.limits_changed", "Subscription", subscription.Id.ToString());
         await _db.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);
 
@@ -151,6 +155,7 @@ public sealed class AdminSubscriptionsController : ControllerBase
             return Conflict(new { error = "ACTIVE_SUBSCRIPTION_REQUIRED" });
 
         subscription.Cancel();
+        AuditTrail.Record(_db, User, merchantId, "subscription.cancelled", "Subscription", subscription.Id.ToString());
         await _db.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);
 
