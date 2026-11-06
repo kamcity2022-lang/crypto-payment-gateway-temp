@@ -76,6 +76,86 @@ public sealed class MerchantWebhookDashboardHttpTests : IAsyncLifetime
         await _postgres.DisposeAsync();
     }
 
+
+    [Fact]
+    public async Task InvoiceExplorer_SupportsStatusFiltersPaginationAndTenantIsolation()
+    {
+        Guid ownInvoiceId;
+        Guid otherInvoiceId;
+        await using (var db = NewDb())
+        {
+            var ownWallet = new Wallet(_merchant, "test-xpub", "TRON");
+            var otherWallet = new Wallet(_otherMerchant, "other-test-xpub", "TRON");
+            db.Wallets.AddRange(ownWallet, otherWallet);
+            var ownAddress = ownWallet.AllocateNextAddress("TTestExplorerOwnAddress");
+            var otherAddress = otherWallet.AllocateNextAddress("TTestExplorerOtherAddress");
+            db.DerivedAddresses.AddRange(ownAddress, otherAddress);
+            var ownInvoice = new Invoice(_merchant, ownAddress.Id, ownAddress.Address,
+                12m, "USD", 1m, "test", DateTime.UtcNow, 12000000L, 0L,
+                "https://1.1.1.1/merchant-webhook", Guid.NewGuid().ToString("N"),
+                TimeSpan.FromMinutes(30));
+            var otherInvoice = new Invoice(_otherMerchant, otherAddress.Id, otherAddress.Address,
+                19m, "USD", 1m, "test", DateTime.UtcNow, 19000000L, 0L,
+                "https://1.1.1.1/merchant-webhook", Guid.NewGuid().ToString("N"),
+                TimeSpan.FromMinutes(30));
+            db.Invoices.AddRange(ownInvoice, otherInvoice);
+            await db.SaveChangesAsync();
+            ownInvoiceId = ownInvoice.Id;
+            otherInvoiceId = otherInvoice.Id;
+        }
+
+        const string path = "/api/v1/dashboard/invoices";
+        using var list = await _viewer.GetAsync(path + "?status=Pending&pageSize=1");
+        list.StatusCode.Should().Be(HttpStatusCode.OK);
+        using var json = JsonDocument.Parse(await list.Content.ReadAsStringAsync());
+        json.RootElement.GetProperty("totalCount").GetInt32().Should().Be(1);
+        json.RootElement.GetProperty("items")[0].GetProperty("id").GetGuid().Should().Be(ownInvoiceId);
+
+        using var others = await _other.GetAsync(path + "?status=Pending");
+        others.StatusCode.Should().Be(HttpStatusCode.OK);
+        var otherBody = await others.Content.ReadAsStringAsync();
+        otherBody.Should().Contain(otherInvoiceId.ToString());
+        otherBody.Should().NotContain(ownInvoiceId.ToString());
+
+        using var ownDetail = await _viewer.GetAsync(path + "/" + ownInvoiceId);
+        ownDetail.StatusCode.Should().Be(HttpStatusCode.OK);
+        (await ownDetail.Content.ReadAsStringAsync()).Should().Contain("TTestExplorerOwnAddress");
+        using var denied = await _viewer.GetAsync(path + "/" + otherInvoiceId);
+        denied.StatusCode.Should().Be(HttpStatusCode.NotFound);
+
+        using var invalid = await _viewer.GetAsync(path + "?status=NotARealStatus");
+        invalid.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        using var numeric = await _viewer.GetAsync(path + "?status=999");
+        numeric.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        using var backwards = await _viewer.GetAsync(path +
+            "?fromDateUtc=2026-11-06T00:00:00Z&toDateUtc=2026-11-05T00:00:00Z");
+        backwards.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+
+        using var missing = await _viewer.GetAsync(path + "?status=Expired");
+        missing.StatusCode.Should().Be(HttpStatusCode.OK);
+        using var missingJson = JsonDocument.Parse(await missing.Content.ReadAsStringAsync());
+        missingJson.RootElement.GetProperty("totalCount").GetInt32().Should().Be(0);
+        using var anon = await _anonymous.GetAsync(path);
+        anon.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+    }
+
+    [Fact]
+    public async Task InvoiceExplorerHtml_HasFiltersPaginationAndTransferDetails()
+    {
+        using var response = await _owner.GetAsync("/dashboard.html");
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var html = await response.Content.ReadAsStringAsync();
+        html.Should().Contain("id=\"invoiceStatusFilter\"");
+        html.Should().Contain("id=\"invoiceFromDate\"");
+        html.Should().Contain("id=\"invoiceToDate\"");
+        html.Should().Contain("id=\"invoiceExplorerTable\"");
+        html.Should().Contain("id=\"invoiceDetailsModal\"");
+        html.Should().Contain("id=\"invoiceDetailsTransfers\"");
+        html.Should().Contain("loadInvoiceExplorer(");
+        html.Should().Contain("showInvoiceDetails(");
+        html.Should().Contain("API_BASE + '/dashboard/invoices/'");
+    }
+
     [Fact]
     public async Task Settings_AuthorizationAndSsrfValidation()
     {
