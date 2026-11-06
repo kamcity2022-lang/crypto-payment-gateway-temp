@@ -231,6 +231,19 @@
         </div>
     </section>
 
+    <section class="card" aria-labelledby="auditHeading">
+        <div class="subscription-heading">
+            <h3 id="auditHeading">Recent Security &amp; Administration Activity</h3>
+            <button type="button" class="btn btn-secondary" onclick="loadMerchantAudit()">Refresh</button>
+        </div>
+        <p class="subscription-note">Only Merchant Owners can view this history.</p>
+        <p id="auditError" class="error hidden" role="alert"></p>
+        <div style="overflow-x:auto"><table>
+            <thead><tr><th>Time (UTC)</th><th>Action</th><th>Target</th><th>Actor</th></tr></thead>
+            <tbody id="auditTable"></tbody>
+        </table></div>
+    </section>
+
     <div class="card">
         <h3 style="margin-top: 0;">Recent Invoices</h3>
         <table>
@@ -275,6 +288,7 @@
                 loadOverview();
                 loadInvoiceExplorer(1);
                 loadSubscription();
+                loadMerchantAudit();
                 loadApiKeys();
                 loadTeam();
                 loadWebhookData();
@@ -906,6 +920,42 @@
             const target = document.getElementById('invoiceDetailsError');
             target.textContent = e.message || 'Unable to load invoice.';
             target.classList.remove('hidden');
+        }
+    }
+
+
+    async function loadMerchantAudit() {
+        const table = document.getElementById('auditTable');
+        const error = document.getElementById('auditError');
+        table.replaceChildren();
+        error.classList.add('hidden');
+        try {
+            const response = await fetch(API_BASE + '/dashboard/audit?pageSize=20', {
+                credentials: 'include', cache: 'no-store'
+            });
+            if (response.status === 403) {
+                // Audit is intentionally Owner-only; other roles see no data.
+                document.getElementById('auditHeading').closest('section').classList.add('hidden');
+                return;
+            }
+            if (!response.ok) throw new Error('Unable to retrieve audit history.');
+            document.getElementById('auditHeading').closest('section').classList.remove('hidden');
+            const data = await response.json();
+            if (!data.items.length) {
+                const cell = table.insertRow().insertCell();
+                cell.colSpan = 4;
+                cell.textContent = 'No recorded activity.';
+            }
+            for (const entry of data.items) {
+                const row = table.insertRow();
+                row.insertCell().textContent = new Date(entry.occurredAtUtc).toISOString().replace('T',' ').slice(0,19);
+                row.insertCell().textContent = entry.action;
+                row.insertCell().textContent = entry.targetType + ' ' + entry.targetId;
+                row.insertCell().textContent = entry.actorUserId || 'System';
+            }
+        } catch(e) {
+            error.textContent = e.message || 'Unable to retrieve audit history.';
+            error.classList.remove('hidden');
         }
     }
 

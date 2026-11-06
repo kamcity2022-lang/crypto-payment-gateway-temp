@@ -204,3 +204,14 @@
 - Safe DOM textContent is used for data (no HTML interpolation). Authenticated sessions protect list/details; async response sequencing prevents stale results after logout/filter changes.
 - HTTP/PostgreSQL integration tests cover filtering, other-merchant isolation, invoice details and invalid query ranges; HTML smoke test checks controls.
 - Full operational audit/monitoring, docs and production security hardening remain before launch.
+
+## Phase 2 — Operational Audit (initial coverage)
+**Status:** Draft PR pending CI.
+
+- Append-only, secret-free audit metadata: actor, merchant, curated action, target type/ID, UTC timestamp.
+- Audit events are committed with their corresponding successful write for Plan, Subscription, API-key and Merchant Team lifecycle operations.
+- Owner-only tenant-scoped audit API and SuperAdmin global/merchant-filtered API; 20 most recent items displayed in each portal.
+- Audited API key rotation, revocation and team role/status changes are persisted in the same transaction.
+- Tests assert role restrictions, tenant isolation, event presence and absence of raw keys, secrets or descriptions.
+- Audit coverage is intentionally limited to the above administrative operations. Remaining invoice/settlement/authentication events, retention policy and tamper-resistant external export are later operational tasks.
+- CSRF, rate limiting, config-secret rotation and monitoring remain release gates before production.
