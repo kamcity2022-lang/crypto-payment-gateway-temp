@@ -103,3 +103,14 @@
 - Clear EF tracking after a rolled-back cycle to prevent dirty entities surviving the next loop.
 - Retains existing idempotency unique index and webhook behavior.
 - Follow-up operational task: monitor scan lag/provider outages and review transaction duration under production load.
+
+## P0.3c — Webhook Lease Fencing & Safe Failure Details
+**Status:** Draft; pending CI and integration verification.
+
+- Previous dispatcher could overwrite the result of another worker after its 30-second lease had expired.
+- Persist outcomes using a conditional, atomic PostgreSQL update matching the exact acquired lease token; stale workers cannot clobber another claim.
+- Detach the claimed EF entity before finalization to avoid hidden, stale tracked state.
+- Preserve at-least-once delivery with stable Event ID, payload and signing contract. Merchants still must deduplicate events by Event ID.
+- Distinguish provider timeout from host cancellation. Do not persist full transport exception messages that could contain sensitive data.
+- Keep HTTPS-only webhook destinations and existing retry/dead-letter/manual-redelivery behavior.
+- No new schema changes, billing, admin UI or secret configuration changes.
