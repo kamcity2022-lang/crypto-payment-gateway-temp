@@ -134,3 +134,15 @@
 - Uses DOM textContent rather than HTML for untrusted Plan names.
 - Subscription DTO projects elapsed usage periods into a future period without persisting mutations during GET.
 - Usage reset is not represented as a subscription billing renewal.
+
+## Phase 2 — Merchant API Key Lifecycle
+**Status:** Draft PR, pending CI.
+
+- Supports multiple HMAC signing keys per Merchant through a new MerchantApiKeys table, including active/revoked state and unique hashed API key.
+- Migrates existing Merchant credentials into a revocable Primary key; never falls back to the legacy Merchant fields after revocation.
+- Merchant scoped list, create, rotate and revoke endpoints; only Owner/Admin may change keys, Developer may list; Viewer denied.
+- API key hash only and AES-encrypted HMAC secret persisted. Raw key and secret returned only on create/rotate, never on GET.
+- Rotation revokes the previous key atomically and issues a successor; revocation immediately blocks subsequent signed requests.
+- Merchant Dashboard UI for key lifecycle, including one-time credential display and explicit confirmation on destructive actions.
+- HTTP/PostgreSQL integration tests for tenant isolation, permissions, lifecycle and HMAC usage.
+- CSRF protection, rate limiting and full audit remain mandatory before production launch under the previously deferred security backlog.
