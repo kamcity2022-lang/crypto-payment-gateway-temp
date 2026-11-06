@@ -70,8 +70,8 @@ public class TronScannerService : ITronScannerService
                         i.Status == InvoiceStatus.PartiallyPaid ||
                         i.Status == InvoiceStatus.Underpaid ||
                         (i.Status == InvoiceStatus.Expired && i.ExpiresAtUtc >= latePaymentRetention) ||
-                        (i.Status == InvoiceStatus.Paid && i.PaidAtUtc.HasValue &&
-                         i.PaidAtUtc.Value >= overpaymentRetention))
+                        ((i.Status == InvoiceStatus.Paid || i.Status == InvoiceStatus.Overpaid) &&
+                         i.PaidAtUtc.HasValue && i.PaidAtUtc.Value >= overpaymentRetention))
             .ToListAsync(cancellationToken);
 
         foreach (var invoice in invoices)
@@ -82,6 +82,17 @@ public class TronScannerService : ITronScannerService
                 _dbContext.ChangeTracker.Clear();
                 _logger.LogWarning("TRON scan aborted; unresolved provider data will be retried on the next cycle.");
                 return;
+            }
+
+            // Time-based transitions are written by the Worker with their
+            // outbox event, not by a public GET request to Hosted Checkout.
+            // Evaluate only AFTER a successful scan so a late payment does not
+            // emit a spurious expiration event before being observed.
+            var beforeTimeTransition = invoice.Status;
+            invoice.EvaluateStatus();
+            if (beforeTimeTransition != invoice.Status)
+            {
+                await QueueInvoiceStatusWebhookAsync(invoice, null, cancellationToken);
             }
         }
 
@@ -190,28 +201,7 @@ public class TronScannerService : ITronScannerService
 
                         if (previousStatus != currentStatus)
                         {
-                            var merchant = await _dbContext.Merchants
-                                .FindAsync(new object[] { invoice.MerchantId }, ct);
-
-                            if (merchant != null)
-                            {
-                                var payload = JsonSerializer.Serialize(new
-                                {
-                                    @event = $"invoice.{currentStatus.ToString().ToLowerInvariant()}",
-                                    invoiceId = invoice.Id,
-                                    status = currentStatus.ToString(),
-                                    paidUnits = invoice.PaidAmountUnits,
-                                    expectedUnits = invoice.ExpectedAmountUnits,
-                                    txHash = txHash
-                                });
-
-                                _dbContext.OutboxEvents.Add(new OutboxEvent(
-                                    invoice.Id,
-                                    $"invoice.{currentStatus.ToString().ToLowerInvariant()}",
-                                    payload,
-                                    invoice.CallbackUrl,
-                                    merchant.EncryptedWebhookSecret));
-                            }
+                            await QueueInvoiceStatusWebhookAsync(invoice, txHash, ct);
                         }
                     }
 
@@ -219,8 +209,13 @@ public class TronScannerService : ITronScannerService
                 }
                 else
                 {
+                    var previousStatus = invoice.Status;
                     existingTransfer.UpdateConfirmations(solidifiedBlockNumber, 1);
                     invoice.EvaluateStatus();
+                    if (previousStatus != invoice.Status)
+                    {
+                        await QueueInvoiceStatusWebhookAsync(invoice, txHash, ct);
+                    }
                     _dbContext.Entry(invoice).State = EntityState.Modified;
                 }
 
@@ -240,6 +235,35 @@ public class TronScannerService : ITronScannerService
             }
         }
         return true;
+    }
+
+    private async Task QueueInvoiceStatusWebhookAsync(
+        Invoice invoice, string? transactionHash, CancellationToken ct)
+    {
+        var merchant = await _dbContext.Merchants.FindAsync(
+            new object[] { invoice.MerchantId }, ct);
+        if (merchant is null)
+        {
+            // An Invoice without its Merchant is an integrity failure. Do not
+            // silently commit a state transition without its webhook event.
+            throw new InvalidOperationException(
+                $"Merchant missing while emitting invoice status event for {invoice.Id}.");
+        }
+
+        var eventType = $"invoice.{invoice.Status.ToString().ToLowerInvariant()}";
+        var payload = JsonSerializer.Serialize(new
+        {
+            @event = eventType,
+            invoiceId = invoice.Id,
+            status = invoice.Status.ToString(),
+            paidUnits = invoice.PaidAmountUnits,
+            expectedUnits = invoice.ExpectedAmountUnits,
+            txHash = transactionHash
+        });
+
+        _dbContext.OutboxEvents.Add(new OutboxEvent(
+            invoice.Id, eventType, payload,
+            invoice.CallbackUrl, merchant.EncryptedWebhookSecret));
     }
 
     private async Task<ulong> GetSolidifiedBlockNumberAsync(CancellationToken ct)
