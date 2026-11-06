@@ -51,32 +51,25 @@ public class AuthIntegrationTests : IAsyncLifetime
         var merchantId = Guid.NewGuid();
         var plainToken = "secure-atomic-test-token";
         var tokenRecord = new MerchantClaimToken(merchantId, plainToken, TimeSpan.FromHours(1));
-        
         _dbContext.MerchantClaimTokens.Add(tokenRecord);
         await _dbContext.SaveChangesAsync();
 
         var hashedToken = HashToken(plainToken);
         var now = DateTime.UtcNow;
 
-        // شبیه‌سازی واقعی رقابت: استفاده از دو نمونه DbContext کاملاً جداگانه 
-        // (دقیقاً مانند زمانی که دو درخواست HTTP همزمان به سرور می‌رسند)
         var options = new DbContextOptionsBuilder<GatewayDbContext>().UseNpgsql(_dbContainer.GetConnectionString()).Options;
-        
         await using var db1 = new GatewayDbContext(options);
         await using var db2 = new GatewayDbContext(options);
 
         var task1 = db1.Database.ExecuteSqlInterpolatedAsync(
             $"UPDATE \"MerchantClaimTokens\" SET \"IsUsed\" = true WHERE \"HashedToken\" = {hashedToken} AND \"IsUsed\" = false AND \"ExpiresAtUtc\" > {now}");
-        
         var task2 = db2.Database.ExecuteSqlInterpolatedAsync(
             $"UPDATE \"MerchantClaimTokens\" SET \"IsUsed\" = true WHERE \"HashedToken\" = {hashedToken} AND \"IsUsed\" = false AND \"ExpiresAtUtc\" > {now}");
 
-        await Task.WhenAll(task1, task2);
-
-        var totalRowsAffected = task1.Result + task2.Result;
+        // ✅ FIX: استفاده از await به جای .Result برای جلوگیری از Deadlock
+        var totalRowsAffected = await task1 + await task2;
         totalRowsAffected.Should().Be(1, "Only one concurrent request should successfully update the token due to the 'IsUsed = false' condition");
 
-        // ✅ اصلاح: استفاده از AsNoTracking() برای دور زدن Change Tracker و خواندن داده به‌روز از دیتابیس
         var updatedToken = await _dbContext.MerchantClaimTokens.AsNoTracking().FirstAsync(t => t.Id == tokenRecord.Id);
         updatedToken.IsUsed.Should().BeTrue();
     }

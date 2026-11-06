@@ -10,19 +10,30 @@ namespace Gateway.Domain.Tests;
 public class SubscriptionValidationTests
 {
     [Fact]
-    public void Subscription_RecordUsage_WithNegativeInvoiceIncrement_ShouldThrow()
+    public void Subscription_RecordInvoiceCreation_WithNegativeAmount_ShouldThrow()
     {
         var sub = new Subscription(Guid.NewGuid(), Guid.NewGuid());
-        var act = () => sub.RecordUsage(-1, 0m);
+        var act = () => sub.RecordInvoiceCreation(-1m);
         act.Should().Throw<ArgumentOutOfRangeException>();
     }
 
     [Fact]
-    public void Subscription_RecordUsage_WithNegativeVolumeIncrement_ShouldThrow()
+    public void Subscription_RecordInvoiceCreation_WithZeroAmount_ShouldThrow()
     {
         var sub = new Subscription(Guid.NewGuid(), Guid.NewGuid());
-        var act = () => sub.RecordUsage(0, -1m);
+        var act = () => sub.RecordInvoiceCreation(0m);
         act.Should().Throw<ArgumentOutOfRangeException>();
+    }
+
+    [Fact]
+    public void Subscription_RecordInvoiceCreation_WithValidAmount_ShouldIncrementCounters()
+    {
+        var sub = new Subscription(Guid.NewGuid(), Guid.NewGuid());
+        sub.RecordInvoiceCreation(100m);
+        sub.RecordInvoiceCreation(250m);
+
+        sub.CurrentPeriodInvoiceCount.Should().Be(2);
+        sub.CurrentPeriodVolumeUsd.Should().Be(350m);
     }
 
     [Fact]
@@ -62,7 +73,7 @@ public class SubscriptionValidationTests
         startProp.SetValue(sub, threeMonthsAgo);
         endProp.SetValue(sub, threeMonthsAgo.AddMonths(1));
         
-        // ✅ استفاده از Reflection برای تغییر مقادیر read-only
+        // Use reflection for read-only properties
         var countProp = typeof(Subscription).GetProperty(nameof(Subscription.CurrentPeriodInvoiceCount))!;
         var volumeProp = typeof(Subscription).GetProperty(nameof(Subscription.CurrentPeriodVolumeUsd))!;
         countProp.SetValue(sub, 50);
@@ -81,7 +92,7 @@ public class SubscriptionValidationTests
         var sub = new Subscription(Guid.NewGuid(), Guid.NewGuid());
         var originalEnd = sub.CurrentPeriodEndUtc;
         
-        // ✅ استفاده از Reflection برای تغییر مقدار read-only
+        // Use reflection for read-only property
         var countProp = typeof(Subscription).GetProperty(nameof(Subscription.CurrentPeriodInvoiceCount))!;
         countProp.SetValue(sub, 50);
         

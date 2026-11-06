@@ -53,19 +53,13 @@ public class Subscription
         CurrentPeriodVolumeUsd = 0m;
     }
 
-    public void RecordUsage(int invoiceCountIncrement, decimal volumeIncrementUsd)
+    public void RecordInvoiceCreation(decimal fiatAmountUsd)
     {
-        if (invoiceCountIncrement < 0)
-            throw new ArgumentOutOfRangeException(nameof(invoiceCountIncrement), "Invoice count increment cannot be negative.");
-        if (volumeIncrementUsd < 0)
-            throw new ArgumentOutOfRangeException(nameof(volumeIncrementUsd), "Volume increment cannot be negative.");
-        if (CurrentPeriodInvoiceCount + invoiceCountIncrement < 0)
-            throw new InvalidOperationException("Resulting invoice count would be invalid.");
-        if (CurrentPeriodVolumeUsd + volumeIncrementUsd < 0)
-            throw new InvalidOperationException("Resulting volume would be invalid.");
+        if (fiatAmountUsd <= 0)
+            throw new ArgumentOutOfRangeException(nameof(fiatAmountUsd), "Fiat amount must be positive.");
 
-        CurrentPeriodInvoiceCount += invoiceCountIncrement;
-        CurrentPeriodVolumeUsd += volumeIncrementUsd;
+        CurrentPeriodInvoiceCount++;
+        CurrentPeriodVolumeUsd += fiatAmountUsd;
     }
 
     public void OverrideLimits(int? customInvoiceLimit, decimal? customVolumeLimitUsd)
