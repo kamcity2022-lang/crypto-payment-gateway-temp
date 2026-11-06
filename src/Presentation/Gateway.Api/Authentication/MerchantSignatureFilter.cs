@@ -1,5 +1,4 @@
-﻿using System;
-using System.IO;
+using System;
 using System.Security.Cryptography;
 using System.Text;
 using System.Threading.Tasks;
@@ -14,93 +13,134 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace Gateway.Api.Authentication;
 
+// Resource filters run before MVC model binding. An action filter runs AFTER
+// [FromBody] deserialization and can accidentally authenticate an empty body.
 [AttributeUsage(AttributeTargets.Class | AttributeTargets.Method)]
-public class RequireMerchantSignatureAttribute : Attribute, IAsyncActionFilter
+public sealed class RequireMerchantSignatureAttribute : Attribute, IAsyncResourceFilter
 {
-    public async Task OnActionExecutionAsync(ActionExecutingContext context, ActionExecutionDelegate next)
+    private const int MaxSignedBodyBytes = 1024 * 1024;
+    private const long AllowedClockSkewSeconds = 300;
+
+    public async Task OnResourceExecutionAsync(
+        ResourceExecutingContext context, ResourceExecutionDelegate next)
     {
         var request = context.HttpContext.Request;
+        var ct = context.HttpContext.RequestAborted;
 
-        // 1. Validate required headers
-        if (!request.Headers.TryGetValue("X-API-Key", out var apiKeyVals) ||
-            !request.Headers.TryGetValue("X-Signature", out var sigVals) ||
-            !request.Headers.TryGetValue("X-Timestamp", out var tsVals) ||
-            !request.Headers.TryGetValue("X-Nonce", out var nonceVals))
+        if (!request.Headers.TryGetValue("X-API-Key", out var apiKeyValues) ||
+            !request.Headers.TryGetValue("X-Signature", out var signatureValues) ||
+            !request.Headers.TryGetValue("X-Timestamp", out var timestampValues) ||
+            !request.Headers.TryGetValue("X-Nonce", out var nonceValues))
         {
             context.Result = new UnauthorizedObjectResult(new { error = "Missing required authentication headers." });
             return;
         }
 
-        var apiKey = apiKeyVals.ToString();
-        var signature = sigVals.ToString();
-        var nonce = nonceVals.ToString();
+        var apiKey = apiKeyValues.ToString();
+        var signature = signatureValues.ToString();
+        var nonce = nonceValues.ToString();
+        if (string.IsNullOrWhiteSpace(apiKey) || string.IsNullOrWhiteSpace(nonce) ||
+            nonce.Length > 128 || signature.Length != 64)
+        {
+            context.Result = new UnauthorizedObjectResult(new { error = "Invalid authentication headers." });
+            return;
+        }
 
-        // 2. Validate timestamp & clock skew (5 minutes)
-        if (!long.TryParse(tsVals.ToString(), out var timestampEpoch))
+        if (!long.TryParse(timestampValues.ToString(), out var timestampEpoch))
         {
             context.Result = new UnauthorizedObjectResult(new { error = "Invalid timestamp format." });
             return;
         }
 
-        var reqTime = DateTimeOffset.FromUnixTimeSeconds(timestampEpoch).UtcDateTime;
-        if (Math.Abs((DateTime.UtcNow - reqTime).TotalMinutes) > 5)
+        // Compare Unix seconds instead of constructing DateTimeOffset from
+        // untrusted input (extreme values must return 401 rather than 500).
+        var nowEpoch = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        if (timestampEpoch < nowEpoch - AllowedClockSkewSeconds ||
+            timestampEpoch > nowEpoch + AllowedClockSkewSeconds)
         {
             context.Result = new UnauthorizedObjectResult(new { error = "Request timestamp expired or skewed beyond 5 minutes." });
             return;
         }
 
+        // Check size before reading when Content-Length is available; also
+        // enforce an incremental limit for chunked transfer encodings.
+        if (request.ContentLength > MaxSignedBodyBytes)
+        {
+            context.Result = PayloadTooLarge();
+            return;
+        }
+
         var db = context.HttpContext.RequestServices.GetRequiredService<GatewayDbContext>();
         var protector = context.HttpContext.RequestServices.GetRequiredService<ISecretProtector>();
+        var apiKeyHash = Convert.ToHexString(
+            SHA256.HashData(Encoding.UTF8.GetBytes(apiKey))).ToLowerInvariant();
+        var merchant = await db.Merchants.FirstOrDefaultAsync(
+            m => m.ApiKeyHash == apiKeyHash && m.IsActive, ct);
 
-        // 3. Resolve merchant by API Key Hash
-        using var sha = SHA256.Create();
-        var keyHash = Convert.ToHexString(sha.ComputeHash(Encoding.UTF8.GetBytes(apiKey))).ToLowerInvariant();
-        var merchant = await db.Merchants.FirstOrDefaultAsync(m => m.ApiKeyHash == keyHash && m.IsActive);
-
-        if (merchant == null)
+        if (merchant is null)
         {
             context.Result = new UnauthorizedObjectResult(new { error = "Invalid merchant credentials." });
             return;
         }
 
-        // 4. Canonical Request Verification
-        request.EnableBuffering();
-        string rawBody;
-        using (var reader = new StreamReader(request.Body, Encoding.UTF8, leaveOpen: true))
+        // Compute SHA-256 over EXACT raw bytes, not decoded/re-encoded text.
+        // Reset the buffered stream so MVC input formatters can bind the body.
+        request.EnableBuffering(bufferThreshold: 64 * 1024);
+        using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        var buffer = new byte[16 * 1024];
+        long total = 0;
+        int bytesRead;
+        while ((bytesRead = await request.Body.ReadAsync(buffer.AsMemory(), ct)) != 0)
         {
-            rawBody = await reader.ReadToEndAsync();
-            request.Body.Position = 0;
+            total += bytesRead;
+            if (total > MaxSignedBodyBytes)
+            {
+                context.Result = PayloadTooLarge();
+                return;
+            }
+            hash.AppendData(buffer, 0, bytesRead);
         }
+        request.Body.Position = 0;
 
-        var bodyHash = Convert.ToHexString(sha.ComputeHash(Encoding.UTF8.GetBytes(rawBody))).ToLowerInvariant();
+        var bodyHash = Convert.ToHexString(hash.GetHashAndReset()).ToLowerInvariant();
+        // The API contract signs the exact path and raw query string.
         var queryString = request.QueryString.HasValue ? request.QueryString.Value : string.Empty;
         var canonical = $"{request.Method.ToUpperInvariant()}\n{request.Path}\n{queryString}\n{timestampEpoch}\n{nonce}\n{bodyHash}";
 
         var secret = protector.Decrypt(merchant.EncryptedApiKeySecret);
         using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(secret));
-        var expectedSig = Convert.ToHexString(hmac.ComputeHash(Encoding.UTF8.GetBytes(canonical))).ToLowerInvariant();
-
-        if (!CryptographicOperations.FixedTimeEquals(
-            Encoding.UTF8.GetBytes(signature.ToLowerInvariant()),
-            Encoding.UTF8.GetBytes(expectedSig)))
+        var expected = hmac.ComputeHash(Encoding.UTF8.GetBytes(canonical));
+        byte[] provided;
+        try
         {
-            // Invalid signature must NOT consume nonce
+            provided = Convert.FromHexString(signature);
+        }
+        catch (FormatException)
+        {
             context.Result = new UnauthorizedObjectResult(new { error = "Invalid HMAC signature." });
             return;
         }
 
-        // 5. Only AFTER successful signature verification, atomically persist the nonce
-        var existingNonce = await db.MerchantNonces
-            .AnyAsync(n => n.MerchantId == merchant.Id && n.Nonce == nonce);
-        if (existingNonce)
+        if (provided.Length != expected.Length ||
+            !CryptographicOperations.FixedTimeEquals(provided, expected))
+        {
+            context.Result = new UnauthorizedObjectResult(new { error = "Invalid HMAC signature." });
+            return;
+        }
+
+        // A rejected signature must not consume a nonce. The unique database
+        // key closes the race between parallel requests with the same nonce.
+        if (await db.MerchantNonces.AnyAsync(
+            n => n.MerchantId == merchant.Id && n.Nonce == nonce, ct))
         {
             context.Result = new ConflictObjectResult(new { error = "Replay detected: Nonce has already been used." });
             return;
         }
+
         db.MerchantNonces.Add(new MerchantNonce(merchant.Id, nonce, TimeSpan.FromMinutes(10)));
         try
         {
-            await db.SaveChangesAsync();
+            await db.SaveChangesAsync(ct);
         }
         catch (DbUpdateException)
         {
@@ -108,9 +148,13 @@ public class RequireMerchantSignatureAttribute : Attribute, IAsyncActionFilter
             return;
         }
 
-        // ✅ FIX: Only set the trusted MerchantId. Do NOT inject human-user claims or roles.
         context.HttpContext.Items["MerchantId"] = merchant.Id;
-        
         await next();
     }
+
+    private static ObjectResult PayloadTooLarge() =>
+        new(new { error = "SIGNED_BODY_TOO_LARGE" })
+        {
+            StatusCode = StatusCodes.Status413PayloadTooLarge
+        };
 }

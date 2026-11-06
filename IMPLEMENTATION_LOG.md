@@ -80,3 +80,14 @@
 - Persist market source, timestamp and rate as immutable per-invoice snapshots.
 - Existing quota integration tests use an explicit deterministic provider; they do not depend on live internet.
 - No secrets/config hardening, migrations or changes to scanner/outbox/webhook flow.
+
+## P0.3 — Payment Security Verification: HMAC Body Integrity
+**Status:** Draft PR, pending full CI.
+
+- Root-cause fix: merchant HMAC attribute was an MVC action filter, which runs after body model binding and may hash a consumed/empty stream.
+- Moved authentication to a resource filter before model binding.
+- Compute SHA-256 of exact raw request body bytes, reset the buffered body for MVC.
+- Bound signed request bodies to 1 MiB, checked Unix timestamp without overflow, decoded HMAC hex before constant-time comparison.
+- Preserve existing canonical string (method, raw path/query, timestamp, nonce, raw-byte body hash) and DB nonce uniqueness.
+- Real HTTP/PostgreSQL integration tests: valid body signature, empty-body signature bypass attempt, body/query tampering, replayed nonce, extreme timestamp and oversized body.
+- Existing scanner, finality, outbox and webhook E2E tests remain covered by CI. No unrelated changes.
