@@ -201,6 +201,11 @@ public sealed class MerchantTeamHttpIntegrationTests : IAsyncLifetime
         change.StatusCode.Should().Be(HttpStatusCode.OK,
             await change.Content.ReadAsStringAsync());
 
+        // The test's scoped UserManager/DbContext tracked the member BEFORE
+        // the HTTP request. Reload from the database after the mutation:
+        // otherwise FindByIdAsync returns the stale tracked entity.
+        scope.ServiceProvider.GetRequiredService<GatewayDbContext>()
+            .ChangeTracker.Clear();
         var changed = await users.FindByIdAsync(_memberId);
         var roles = await users.GetRolesAsync(changed!);
         roles.Should().ContainSingle().Which.Should().Be("Developer");
@@ -210,6 +215,8 @@ public sealed class MerchantTeamHttpIntegrationTests : IAsyncLifetime
             "/api/v1/dashboard/team/" + _memberId + "/status",
             new { disabled = true });
         disable.StatusCode.Should().Be(HttpStatusCode.OK);
+        scope.ServiceProvider.GetRequiredService<GatewayDbContext>()
+            .ChangeTracker.Clear();
         (await users.FindByIdAsync(_memberId))!.IsDisabled.Should().BeTrue();
 
         using var selfOwner = await _owner.PutAsJsonAsync(
