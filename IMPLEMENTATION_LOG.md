@@ -171,3 +171,14 @@
 - HTTP/PostgreSQL integration coverage for tenant isolation, permissions, invalid URLs, event history, and retry deduplication.
 - Existing HMAC merchant integration endpoints remain available for backward compatibility.
 - Cookie CSRF prevention, outbound event retention and full audit logging remain deferred production gates.
+
+## Phase 2 — SuperAdmin Plan Management UI
+**Status:** Draft PR pending CI.
+
+- SuperAdmin admin.html now lists subscription plans and their invoice/volume limits, USD price, active/default state.
+- Create and edit flows use the existing secured /api/v1/admin/plans endpoints; setting a new default is explicit and requires confirmation.
+- Activate and deactivate controls respect the backend default-plan invariant (the default plan cannot be deactivated).
+- Uses DOM textContent for untrusted plan values, clamps/validates numeric inputs, and displays API errors without persisting secrets.
+- Existing PostgreSQL/HTTP integration tests cover plan management state transitions, authorization, uniqueness and impact on invoice quotas.
+- Adds a static served HTML integration smoke test covering main controls and API bindings.
+- No migration or changes to subscription billing logic.
