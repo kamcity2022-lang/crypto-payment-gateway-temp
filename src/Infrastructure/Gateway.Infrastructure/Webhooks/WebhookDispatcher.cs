@@ -56,6 +56,9 @@ public class WebhookDispatcher : IWebhookDispatcher
             claimed.AcquireLease(TimeSpan.FromSeconds(30));
             await _dbContext.SaveChangesAsync(cancellationToken);
             await tx.CommitAsync(cancellationToken);
+            // PostgreSQL stores timestamps at microsecond precision. Reload
+            // to obtain the exact persisted lease token for the later CAS.
+            await _dbContext.Entry(claimed).ReloadAsync(cancellationToken);
             pendingEvent = claimed;
         }
 
