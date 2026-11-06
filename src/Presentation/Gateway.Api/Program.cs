@@ -26,9 +26,6 @@ builder.Services.AddDbContext<GatewayDbContext>(options =>
 // 2. Identity Setup (Human Users) — SINGLE registration
 builder.Services.AddIdentity<ApplicationUser, IdentityRole>(options =>
 {
-    // Re-check security stamps on every request so role changes and
-    // disabled accounts invalidate existing Identity cookies immediately.
-    options.SecurityStampValidationInterval = TimeSpan.Zero;
     options.Password.RequireDigit = true;
     options.Password.RequireLowercase = true;
     options.Password.RequireUppercase = true;
@@ -40,6 +37,11 @@ builder.Services.AddIdentity<ApplicationUser, IdentityRole>(options =>
 })
 .AddEntityFrameworkStores<GatewayDbContext>()
 .AddDefaultTokenProviders();
+
+// Role or disabled-state changes update the user security stamp; validate
+// on every request rather than allowing stale role claims for 30 minutes.
+builder.Services.Configure<SecurityStampValidatorOptions>(options =>
+    options.ValidationInterval = TimeSpan.Zero);
 
 // Custom claims factory to inject MerchantId into auth cookie
 builder.Services.AddScoped<IUserClaimsPrincipalFactory<ApplicationUser>, CustomUserClaimsPrincipalFactory>();
