@@ -42,3 +42,15 @@
 ### Remaining Blockers:
 - None. Task 5.2 is fully verified and ready for merge.
 
+## Task 5.3: SuperAdmin Plan Management
+**Date:** 2026-11-06
+**Status:** Implemented; pending CI verification.
+
+- Seven SuperAdmin-only plan API endpoints added without changing Phase 1.
+- Plan creation, updates, activation, deactivation and default selection use existing DTOs/entities.
+- Default changes/deactivation use a shared PostgreSQL transaction-scoped advisory lock.
+- Clear old default via ExecuteUpdate before inserting/assigning new default; retain unique index.
+- Active subscriptions remain linked to deactivated plans and continue processing invoices.
+- Real HTTP authorization tests and PostgreSQL/Testcontainers integration coverage added.
+- No migrations, billing integration, new frontend UI, or new packages.
+- Build/tests must be verified via GitHub Actions before merging.
