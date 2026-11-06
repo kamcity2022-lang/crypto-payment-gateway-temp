@@ -102,6 +102,32 @@
         <p class="subscription-note">Usage resets do not indicate a subscription renewal or payment.</p>
     </section>
 
+    <section class="card" aria-labelledby="apiKeyHeading">
+        <div class="subscription-heading">
+            <h3 id="apiKeyHeading" style="margin:0;">API Keys</h3>
+            <button type="button" class="btn btn-secondary" onclick="loadApiKeys()">Refresh keys</button>
+        </div>
+        <p class="subscription-note">Key management requires Merchant Owner or Admin access. Secrets are only shown once.</p>
+        <p id="apiKeyError" class="error hidden" role="alert"></p>
+        <div id="apiKeyCreateForm" class="hidden" style="margin-top:12px;">
+            <label for="apiKeyName">New key label</label>
+            <input id="apiKeyName" class="input" maxlength="100" placeholder="e.g. Orders integration">
+            <button class="btn" type="button" onclick="createApiKey()">Create API Key</button>
+        </div>
+        <div id="apiKeyOneTime" class="hidden" style="margin-top:12px;">
+            <p class="error">Copy both credentials now. They will not be shown again.</p>
+            <label for="generatedApiKey">API Key</label>
+            <input id="generatedApiKey" class="input" readonly autocomplete="off">
+            <label for="generatedApiSecret">API Secret</label>
+            <input id="generatedApiSecret" class="input" readonly autocomplete="off">
+            <button type="button" class="btn btn-secondary" onclick="clearOneTimeKey()">I saved these credentials</button>
+        </div>
+        <table>
+            <thead><tr><th>Name</th><th>Created</th><th>Status</th><th>Actions</th></tr></thead>
+            <tbody id="apiKeysTable"><tr><td colspan="4">Loading...</td></tr></tbody>
+        </table>
+    </section>
+
     <div class="card">
         <h3 style="margin-top: 0;">Recent Invoices</h3>
         <table>
@@ -133,6 +159,7 @@
                 document.getElementById('dashboardView').classList.remove('hidden');
                 loadOverview();
                 loadSubscription();
+                loadApiKeys();
             } else {
                 showLogin();
             }
@@ -177,6 +204,9 @@
         document.getElementById('dashboardView').classList.add('hidden');
         document.getElementById('loginView').classList.remove('hidden');
         resetSubscriptionDisplay();
+        clearOneTimeKey();
+        document.getElementById("apiKeysTable").replaceChildren();
+        document.getElementById("apiKeyCreateForm").classList.add("hidden");
     }
 
     async function loadOverview() {
@@ -275,6 +305,107 @@
             error.textContent = e.message || 'Unable to load subscription details.';
             error.classList.remove('hidden');
         }
+    }
+
+
+    function showApiKeyError(message) {
+        const target = document.getElementById('apiKeyError');
+        target.textContent = message;
+        target.classList.remove('hidden');
+    }
+
+    function clearOneTimeKey() {
+        document.getElementById('generatedApiKey').value = '';
+        document.getElementById('generatedApiSecret').value = '';
+        document.getElementById('apiKeyOneTime').classList.add('hidden');
+    }
+
+    function showOneTimeKey(result) {
+        clearOneTimeKey();
+        document.getElementById('generatedApiKey').value = result.apiKey;
+        document.getElementById('generatedApiSecret').value = result.apiSecret;
+        document.getElementById('apiKeyOneTime').classList.remove('hidden');
+    }
+
+    async function loadApiKeys() {
+        const table = document.getElementById('apiKeysTable');
+        table.replaceChildren();
+        const error = document.getElementById('apiKeyError');
+        error.textContent = '';
+        error.classList.add('hidden');
+        try {
+            const response = await fetch(API_BASE + '/dashboard/api-keys', {
+                credentials: 'include', cache: 'no-store'
+            });
+            if (response.status === 403) {
+                document.getElementById('apiKeyCreateForm').classList.add('hidden');
+                showApiKeyError('API Key access requires Developer or higher role.');
+                return;
+            }
+            if (!response.ok) throw new Error('Could not load API keys.');
+            const keys = await response.json();
+            document.getElementById('apiKeyCreateForm').classList.remove('hidden');
+            if (keys.length === 0) {
+                const row = table.insertRow();
+                const cell = row.insertCell();
+                cell.colSpan = 4;
+                cell.textContent = 'No API keys.';
+                return;
+            }
+            keys.forEach(key => {
+                const row = table.insertRow();
+                row.insertCell().textContent = key.name;
+                row.insertCell().textContent = new Date(key.createdAtUtc).toLocaleDateString();
+                row.insertCell().textContent = key.revokedAtUtc ? 'Revoked' : 'Active';
+                const actions = row.insertCell();
+                if (!key.revokedAtUtc) {
+                    for (const operation of ['rotate', 'revoke']) {
+                        const button = document.createElement('button');
+                        button.type = 'button';
+                        button.className = 'btn btn-secondary';
+                        button.style.marginRight = '5px';
+                        button.textContent = operation === 'rotate' ? 'Rotate' : 'Revoke';
+                        button.addEventListener('click', () => mutateApiKey(key.id, operation));
+                        actions.appendChild(button);
+                    }
+                }
+            });
+        } catch (e) {
+            showApiKeyError(e.message || 'Could not load API keys.');
+        }
+    }
+
+    async function createApiKey() {
+        const name = document.getElementById('apiKeyName').value.trim();
+        if (!name) return showApiKeyError('Enter a key name.');
+        if (!confirm('Create a new API key? Keep the secret safe.')) return;
+        try {
+            const response = await fetch(API_BASE + '/dashboard/api-keys', {
+                method: 'POST', credentials: 'include',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name })
+            });
+            if (!response.ok) throw new Error('Failed to create key (Owner/Admin required).');
+            showOneTimeKey(await response.json());
+            document.getElementById('apiKeyName').value = '';
+            await loadApiKeys();
+        } catch (e) { showApiKeyError(e.message); }
+    }
+
+    async function mutateApiKey(id, operation) {
+        const message = operation === 'rotate'
+            ? 'Rotate this key? The existing key stops working immediately.'
+            : 'Revoke this key permanently? Requests using it will be rejected.';
+        if (!confirm(message)) return;
+        try {
+            const response = await fetch(
+                API_BASE + '/dashboard/api-keys/' + encodeURIComponent(id) + '/' + operation,
+                { method: 'POST', credentials: 'include' });
+            if (!response.ok) throw new Error('Operation failed (Owner/Admin required).');
+            if (operation === 'rotate') showOneTimeKey(await response.json());
+            else clearOneTimeKey();
+            await loadApiKeys();
+        } catch (e) { showApiKeyError(e.message); }
     }
 
     // Initialize
