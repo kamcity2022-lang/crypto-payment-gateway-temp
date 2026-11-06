@@ -6,7 +6,7 @@ This checklist documents a prototype; it does not certify a live/testnet blockch
 
 - API: .NET 10 ASP.NET Core, PostgreSQL, EF Core migrations on startup, SuperAdmin bootstrap. Static /dashboard.html, /admin.html and /checkout.html. GET /healthz checks DATABASE CONNECTIVITY ONLY.
 - Worker: .NET 10 BackgroundService polling every ~5 seconds, with TRON scanner and webhook sender. Uses the SAME PostgreSQL DB and SAME AES master key as the API.
-- Blockchain: hardcoded LIVE TronGrid HTTP endpoints in TronScannerService (walletsolidity and accounts/trc20). There is NO current runtime toggle that safely switches provider to testnet. Automated integration tests mock TronGrid.
+- Blockchain: Worker and sweep services now select fixed TronGrid hosts via Tron:Network (Mainnet, Nile or Shasta). Missing/unknown network fails closed; Mainnet requires Tron:EnableMainnet=true. The token contract must be explicitly configured, and testnets reject the canonical Mainnet USDT contract. Automated integration tests mock TronGrid.
 - Exchange rates: Coinbase USDT/USD quote provider; unavailable/invalid quote blocks invoice creation (503). No silent 1:1 fallback.
 
 Install .NET 10 SDK, PostgreSQL and Docker (Testcontainers tests). Configure secrets OUTSIDE source code. Avoid copying tracked appsettings credentials into deployment.
@@ -19,7 +19,9 @@ Required configuration keys (ASP.NET Core environment variable equivalents use d
 | Security__MasterEncryptionKey | API + Worker | Same 64-character hex / 32-byte AES key |
 | Bootstrap__SuperAdminEmail | API bootstrap | New local SuperAdmin only |
 | Bootstrap__SuperAdminPassword | API bootstrap | New local SuperAdmin only |
-| Tron__UsdtContractAddress | Worker | Reviewed TRON USDT contract |
+| Tron__Network | API sweep operations + Worker | Required: Mainnet, Nile, or Shasta. No implicit default. |
+| Tron__EnableMainnet | API sweep operations + Worker | Explicit true required for Mainnet |
+| Tron__UsdtContractAddress | API sweep operations + Worker | Reviewed TRON USDT contract on selected network; testnet must use its own validated deployed token |
 | Tron__Scanner__LatePaymentRetentionDays | Worker optional | Defaults 30 |
 | Tron__Scanner__OverpaymentRetentionDays | Worker optional | Defaults 7 |
 | DevOptions__BypassEmailConfirmation | API only, Development | Must be false for production |
@@ -33,7 +35,11 @@ Local commands:
     dotnet test CryptoPaymentGateway.slnx --no-build
     dotnet run --project src/Presentation/Gateway.Api/Gateway.Api.csproj --launch-profile https
 
-Do not start the Worker casually, as it accesses live TRON provider endpoints. If intentionally enabled after configuration review:
+Before starting the Worker, set Tron__Network to Nile or Shasta for tests; use a **separate database, wallet/xpub, merchant data, API keys and webhook receiver** for each network. TRON address prefixes overlap across networks and the current database schema does not tag invoices by chain network. This PR isolates HTTP routing but DOES NOT make shared mainnet/testnet database data safe. You must verify that the chosen testnet TRC-20 contract is deployed, 6-decimal-compatible and matches the intended test asset. A plausible-looking address alone does not prove it is a valid token contract.
+
+Mainnet requires BOTH Tron__Network=Mainnet and Tron__EnableMainnet=true (and the canonical USDT contract). Never enable it casually.
+
+If intentionally enabled after configuration review:
 
     dotnet run --project src/Presentation/Gateway.Worker/Gateway.Worker.csproj
 
@@ -45,7 +51,7 @@ Start API/DB alone to smoke-check /healthz, migrations and authenticated admin/m
 - [ ] Provide working production email verification and secure invite delivery.
 - [ ] Implement CSRF protection for cookie-authenticated state-changing dashboard/admin endpoints and rate limiting.
 - [ ] Review TLS, Cookie, CORS/CSP, caching, DNS rebinding and outbound SSRF behavior in the actual deployment network.
-- [ ] Verify real/testnet receipts and known wallet derivation vectors under an isolated provider before moving real funds.
+- [ ] Verify real/testnet receipts, deployed contract decimals and known wallet derivation vectors under an isolated provider before moving real funds. Enforce separate DB/deployment per chain; current schema has no immutable chain-environment identifier.
 - [ ] Implement independent Worker liveness and metrics: scanner lag, TronGrid errors/rate limiting, quote age, webhook backlog/failed retries.
 - [ ] Create PostgreSQL encrypted backups and perform a full RESTORE DRILL; store the necessary decryption key separately; define RPO/RTO.
 - [ ] Implement audit retention, tamper-resistant offsite export and coverage for authentication, settlement and operational overrides. Audit PR #15 is separate and not on master at the time of writing.

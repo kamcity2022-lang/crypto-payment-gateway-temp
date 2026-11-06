@@ -226,3 +226,13 @@
 - Lists API/Worker env configuration names, .NET/Docker development commands, live TronGrid provider caveat, security/backup/monitoring/testnet release gates.
 - Existing docs/PROJECT_STATUS.md is marked as historical rather than current.
 - PR #15 Audit remains separate and unmerged in master at time this documentation was authored.
+
+## P0 — Explicit TRON Network Selection (Nile/Shasta/Mainnet)
+**Status:** Draft PR pending CI.
+
+- Scanner and Sweep no longer embed live TronGrid endpoint URLs; instead select fixed documented hosts for Mainnet, Nile and Shasta.
+- Mandatory Tron:Network and Tron:UsdtContractAddress; explicit Tron:EnableMainnet=true to access Mainnet; fail closed on missing/unknown network.
+- Canonical Mainnet USDT contract is required on Mainnet and rejected for testnet, but a valid testnet token contract/decimals still must be independently verified.
+- Worker validates network config during startup; existing simulated receipt tests opt into explicitly mocked Mainnet routing.
+- Focused tests verify host selection, Mainnet opt-in, denied cross-network contracts and outbound request routing.
+- IMPORTANT: Database schema is not network-separated. Each testnet deployment MUST use isolated DB/wallets/keys and must not reuse mainnet invoices; immutable network DB binding is a remaining production gate.

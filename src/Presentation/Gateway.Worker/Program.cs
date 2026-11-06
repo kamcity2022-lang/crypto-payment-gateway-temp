@@ -14,6 +14,10 @@ using System.Net.Sockets;
 var host = Host.CreateDefaultBuilder(args)
     .ConfigureServices((hostContext, services) =>
     {
+        // Fail before starting the hosted Worker if the operator has not
+        // explicitly selected a network and (for mainnet) opted in.
+        _ = TronNetworkEndpoints.FromConfiguration(hostContext.Configuration);
+
         var connectionString = hostContext.Configuration.GetConnectionString("DefaultConnection")
                                ?? throw new InvalidOperationException("Fatal: 'DefaultConnection' connection string is required for Gateway.Worker.");
 

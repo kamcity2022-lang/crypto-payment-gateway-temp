@@ -15,13 +15,14 @@ public class TronSweepService : ITronSweepService
     private readonly HttpClient _httpClient;
     private readonly ILogger<TronSweepService> _logger;
     private readonly string _usdtContractAddress;
+    private readonly TronNetworkEndpoints _network;
 
     public TronSweepService(HttpClient httpClient, IConfiguration configuration, ILogger<TronSweepService> logger)
     {
         _httpClient = httpClient;
         _logger = logger;
-        _usdtContractAddress = configuration["Tron:UsdtContractAddress"] 
-            ?? throw new InvalidOperationException("Configuration 'Tron:UsdtContractAddress' is required.");
+        _network = TronNetworkEndpoints.FromConfiguration(configuration);
+        _usdtContractAddress = _network.TokenContract;
     }
 
     public async Task<string> CreateUnsignedSweepTransactionAsync(
@@ -47,7 +48,7 @@ public class TronSweepService : ITronSweepService
         };
 
         using var content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
-        using var response = await _httpClient.PostAsync("https://api.trongrid.io/wallet/triggersmartcontract", content, ct);
+        using var response = await _httpClient.PostAsync(_network.Endpoint("wallet/triggersmartcontract"), content, ct);
 
         if (!response.IsSuccessStatusCode)
         {
@@ -77,7 +78,7 @@ public class TronSweepService : ITronSweepService
     public async Task<string> BroadcastSignedTransactionAsync(string signedTxJson, CancellationToken ct)
     {
         using var content = new StringContent(signedTxJson, Encoding.UTF8, "application/json");
-        using var response = await _httpClient.PostAsync("https://api.trongrid.io/wallet/broadcasttransaction", content, ct);
+        using var response = await _httpClient.PostAsync(_network.Endpoint("wallet/broadcasttransaction"), content, ct);
 
         if (!response.IsSuccessStatusCode)
         {

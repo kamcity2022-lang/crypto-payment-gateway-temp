@@ -109,7 +109,7 @@ public class EndToEndPaymentFlowTests : IAsyncLifetime
         var cfg = new ConfigurationBuilder().AddInMemoryCollection(new[]
         {
             new KeyValuePair<string, string?>("Security:MasterEncryptionKey", "0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF"),
-            new KeyValuePair<string, string?>("Tron:UsdtContractAddress", UsdtContract)
+            new KeyValuePair<string, string?>("Tron:Network", "Mainnet"), new KeyValuePair<string, string?>("Tron:EnableMainnet", "true"), new KeyValuePair<string, string?>("Tron:UsdtContractAddress", UsdtContract)
         }).Build();
 
         _secretProtector = new AesGcmSecretProtector(cfg);
@@ -194,7 +194,7 @@ public class EndToEndPaymentFlowTests : IAsyncLifetime
         mock.AddTransactionResponse(tx, BuildReceiptResp(99_999_900UL, ch, rh, ah, 0));
 
         using var hc = new HttpClient(mock);
-        var cfg = new ConfigurationBuilder().AddInMemoryCollection(new[] { new KeyValuePair<string, string?>("Tron:UsdtContractAddress", UsdtContract) }).Build();
+        var cfg = new ConfigurationBuilder().AddInMemoryCollection(new[] { new KeyValuePair<string, string?>("Tron:Network", "Mainnet"), new KeyValuePair<string, string?>("Tron:EnableMainnet", "true"), new KeyValuePair<string, string?>("Tron:UsdtContractAddress", UsdtContract) }).Build();
         var scanner = new TronScannerService(_dbContext, hc, cfg, NullLogger<TronScannerService>.Instance);
 
         await scanner.ScanPendingDepositsAsync(CancellationToken.None);
@@ -242,7 +242,7 @@ public class EndToEndPaymentFlowTests : IAsyncLifetime
         mock.AddTransactionResponse(tx, BuildReceiptResp(99_999_900UL, ch, rh, ah, 0));
 
         using var hc = new HttpClient(mock);
-        var cfg = new ConfigurationBuilder().AddInMemoryCollection(new[] { new KeyValuePair<string, string?>("Tron:UsdtContractAddress", UsdtContract) }).Build();
+        var cfg = new ConfigurationBuilder().AddInMemoryCollection(new[] { new KeyValuePair<string, string?>("Tron:Network", "Mainnet"), new KeyValuePair<string, string?>("Tron:EnableMainnet", "true"), new KeyValuePair<string, string?>("Tron:UsdtContractAddress", UsdtContract) }).Build();
         var scanner = new TronScannerService(_dbContext, hc, cfg, NullLogger<TronScannerService>.Instance);
 
         await scanner.ScanPendingDepositsAsync(CancellationToken.None);
@@ -294,7 +294,7 @@ public class EndToEndPaymentFlowTests : IAsyncLifetime
         using var client = new HttpClient(handler);
         var config = new ConfigurationBuilder().AddInMemoryCollection(new[]
         {
-            new KeyValuePair<string, string?>("Tron:UsdtContractAddress", UsdtContract)
+            new KeyValuePair<string, string?>("Tron:Network", "Mainnet"), new KeyValuePair<string, string?>("Tron:EnableMainnet", "true"), new KeyValuePair<string, string?>("Tron:UsdtContractAddress", UsdtContract)
         }).Build();
         var scanner = new TronScannerService(
             _dbContext, client, config, NullLogger<TronScannerService>.Instance);
@@ -334,7 +334,7 @@ public class EndToEndPaymentFlowTests : IAsyncLifetime
         mock.AddTransactionResponse(tx1, BuildReceiptResp(99_999_900UL, ch, rh, a1.ToString("x"), 0));
 
         using var hc = new HttpClient(mock);
-        var cfg = new ConfigurationBuilder().AddInMemoryCollection(new[] { new KeyValuePair<string, string?>("Tron:UsdtContractAddress", UsdtContract) }).Build();
+        var cfg = new ConfigurationBuilder().AddInMemoryCollection(new[] { new KeyValuePair<string, string?>("Tron:Network", "Mainnet"), new KeyValuePair<string, string?>("Tron:EnableMainnet", "true"), new KeyValuePair<string, string?>("Tron:UsdtContractAddress", UsdtContract) }).Build();
         var scanner = new TronScannerService(_dbContext, hc, cfg, NullLogger<TronScannerService>.Instance);
 
         await scanner.ScanPendingDepositsAsync(CancellationToken.None);
@@ -374,7 +374,7 @@ public class EndToEndPaymentFlowTests : IAsyncLifetime
         mock.AddTransactionResponse(tx, BuildReceiptResp(99_999_900UL, ch, rh, amt.ToString("x"), 0));
 
         using var hc = new HttpClient(mock);
-        var cfg = new ConfigurationBuilder().AddInMemoryCollection(new[] { new KeyValuePair<string, string?>("Tron:UsdtContractAddress", UsdtContract) }).Build();
+        var cfg = new ConfigurationBuilder().AddInMemoryCollection(new[] { new KeyValuePair<string, string?>("Tron:Network", "Mainnet"), new KeyValuePair<string, string?>("Tron:EnableMainnet", "true"), new KeyValuePair<string, string?>("Tron:UsdtContractAddress", UsdtContract) }).Build();
         var scanner = new TronScannerService(_dbContext, hc, cfg, NullLogger<TronScannerService>.Instance);
 
         await scanner.ScanPendingDepositsAsync(CancellationToken.None);
@@ -421,7 +421,7 @@ public class EndToEndPaymentFlowTests : IAsyncLifetime
         using var client = new HttpClient(mock);
         var cfg = new ConfigurationBuilder().AddInMemoryCollection(new[]
         {
-            new KeyValuePair<string, string?>("Tron:UsdtContractAddress", UsdtContract)
+            new KeyValuePair<string, string?>("Tron:Network", "Mainnet"), new KeyValuePair<string, string?>("Tron:EnableMainnet", "true"), new KeyValuePair<string, string?>("Tron:UsdtContractAddress", UsdtContract)
         }).Build();
         var scanner = new TronScannerService(
             _dbContext, client, cfg, NullLogger<TronScannerService>.Instance);
@@ -457,7 +457,7 @@ public class EndToEndPaymentFlowTests : IAsyncLifetime
         using var client = new HttpClient(mock);
         var cfg = new ConfigurationBuilder().AddInMemoryCollection(new[]
         {
-            new KeyValuePair<string, string?>("Tron:UsdtContractAddress", UsdtContract)
+            new KeyValuePair<string, string?>("Tron:Network", "Mainnet"), new KeyValuePair<string, string?>("Tron:EnableMainnet", "true"), new KeyValuePair<string, string?>("Tron:UsdtContractAddress", UsdtContract)
         }).Build();
         var scanner = new TronScannerService(
             _dbContext, client, cfg, NullLogger<TronScannerService>.Instance);
@@ -501,7 +501,7 @@ public class EndToEndPaymentFlowTests : IAsyncLifetime
         using var client = new HttpClient(mock);
         var cfg = new ConfigurationBuilder().AddInMemoryCollection(new[]
         {
-            new KeyValuePair<string, string?>("Tron:UsdtContractAddress", UsdtContract)
+            new KeyValuePair<string, string?>("Tron:Network", "Mainnet"), new KeyValuePair<string, string?>("Tron:EnableMainnet", "true"), new KeyValuePair<string, string?>("Tron:UsdtContractAddress", UsdtContract)
         }).Build();
         var scanner = new TronScannerService(
             _dbContext, client, cfg, NullLogger<TronScannerService>.Instance);
