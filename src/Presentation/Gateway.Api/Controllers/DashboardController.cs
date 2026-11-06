@@ -132,18 +132,30 @@ public class DashboardController : ControllerBase
     {
         if (!TryGetResolvedMerchantId(out var merchantId)) return Forbid();
 
-        var page = Math.Max(1, filter.Page);
+        var page = Math.Clamp(filter.Page, 1, 10000);
         var pageSize = Math.Clamp(filter.PageSize, 1, 100);
+
+        if (filter.FromDateUtc.HasValue && filter.ToDateUtc.HasValue &&
+            filter.FromDateUtc.Value > filter.ToDateUtc.Value)
+            return BadRequest(new { error = "INVALID_INVOICE_DATE_RANGE" });
+
+        InvoiceStatus? requestedStatus = null;
+        if (!string.IsNullOrWhiteSpace(filter.Status) &&
+            !string.Equals(filter.Status, "all", StringComparison.OrdinalIgnoreCase))
+        {
+            if (!Enum.TryParse<InvoiceStatus>(filter.Status, true, out var parsedStatus) ||
+                !Enum.IsDefined(parsedStatus) ||
+                int.TryParse(filter.Status, out _))
+                return BadRequest(new { error = "INVALID_INVOICE_STATUS_FILTER" });
+            requestedStatus = parsedStatus;
+        }
 
         var query = _dbContext.Invoices
             .AsNoTracking()
             .Where(i => i.MerchantId == merchantId);
 
-        if (!string.IsNullOrWhiteSpace(filter.Status)
-            && Enum.TryParse<InvoiceStatus>(filter.Status, true, out var status))
-        {
-            query = query.Where(i => i.Status == status);
-        }
+        if (requestedStatus.HasValue)
+            query = query.Where(i => i.Status == requestedStatus.Value);
 
         if (filter.FromDateUtc.HasValue)
             query = query.Where(i => i.CreatedAtUtc >= filter.FromDateUtc.Value);
@@ -155,6 +167,7 @@ public class DashboardController : ControllerBase
 
         var items = await query
             .OrderByDescending(i => i.CreatedAtUtc)
+            .ThenByDescending(i => i.Id)
             .Skip((page - 1) * pageSize)
             .Take(pageSize)
             .Select(i => new DashboardInvoiceSummaryDto

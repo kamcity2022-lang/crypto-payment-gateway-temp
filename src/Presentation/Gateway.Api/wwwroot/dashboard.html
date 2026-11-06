@@ -33,6 +33,13 @@
         .login-form { max-width: 400px; margin: 100px auto; }
         .input { width: 100%; padding: 10px; margin-bottom: 12px; background: #0d1117; border: 1px solid #30363d; color: #e6edf3; border-radius: 6px; box-sizing: border-box; }
         .error { color: #f85149; font-size: 13px; margin-bottom: 12px; }
+        .invoice-filters { display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin:14px 0; }
+        .invoice-filters .input { width:auto; max-width:180px; margin:0; }
+        .invoice-pages { display:flex; gap:12px; align-items:center; margin:12px 0; }
+        .invoice-overlay { position:fixed; inset:0; z-index:1000; background:rgba(0,0,0,.8); overflow:auto; padding:16px; }
+        .invoice-overlay-content { background:#161b22; border:1px solid #30363d; border-radius:8px; padding:22px; max-width:1000px; margin:3vh auto; }
+        .invoice-detail-grid { display:grid; grid-template-columns:minmax(130px,200px) minmax(0,1fr); gap:10px; overflow-wrap:anywhere; }
+        .invoice-detail-grid dt { color:#8b949e; } .invoice-detail-grid dd { margin:0; }
     </style>
 </head>
 <body>
@@ -197,6 +204,33 @@
         </table>
     </section>
 
+    <section class="card" aria-labelledby="invoiceExplorerHeading">
+        <div class="subscription-heading"><h3 id="invoiceExplorerHeading">All Invoices</h3>
+            <button type="button" class="btn btn-secondary" onclick="loadInvoiceExplorer(1)">Refresh</button></div>
+        <p id="invoiceExplorerError" class="error hidden" role="alert"></p>
+        <div class="invoice-filters">
+            <label for="invoiceStatusFilter">Status</label>
+            <select id="invoiceStatusFilter" class="input" onchange="loadInvoiceExplorer(1)">
+                <option value="all">All</option><option>Pending</option><option>PartiallyPaid</option>
+                <option>Paid</option><option>Overpaid</option><option>Underpaid</option>
+                <option>Expired</option><option>Cancelled</option>
+            </select>
+            <label for="invoiceFromDate">From (UTC)</label><input id="invoiceFromDate" type="date" class="input">
+            <label for="invoiceToDate">To (UTC)</label><input id="invoiceToDate" type="date" class="input">
+            <button type="button" class="btn btn-secondary" onclick="loadInvoiceExplorer(1)">Filter</button>
+            <button type="button" class="btn btn-secondary" onclick="clearInvoiceFilters()">Clear</button>
+        </div>
+        <div style="overflow-x:auto"><table><thead><tr>
+            <th>Invoice</th><th>Fiat</th><th>Expected USDT</th><th>Received USDT</th>
+            <th>Status</th><th>Created (UTC)</th><th>Details</th></tr></thead>
+            <tbody id="invoiceExplorerTable"></tbody></table></div>
+        <div class="invoice-pages">
+            <button type="button" class="btn btn-secondary" id="invoicePrev" onclick="loadInvoiceExplorer(invoicePage-1)">Previous</button>
+            <span id="invoicePageText">-</span>
+            <button type="button" class="btn btn-secondary" id="invoiceNext" onclick="loadInvoiceExplorer(invoicePage+1)">Next</button>
+        </div>
+    </section>
+
     <div class="card">
         <h3 style="margin-top: 0;">Recent Invoices</h3>
         <table>
@@ -215,6 +249,18 @@
     </div>
 </div>
 
+<div id="invoiceDetailsModal" class="invoice-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="invoiceDetailsTitle">
+  <div class="invoice-overlay-content"><div class="subscription-heading">
+      <h3 id="invoiceDetailsTitle">Invoice details</h3>
+      <button type="button" class="btn btn-secondary" onclick="closeInvoiceDetails()">Close</button></div>
+    <p id="invoiceDetailsError" class="error hidden" role="alert"></p>
+    <dl id="invoiceDetailsFields" class="invoice-detail-grid"></dl>
+    <h4>Blockchain transfers</h4><div style="overflow-x:auto"><table>
+        <thead><tr><th>Hash</th><th>From</th><th>USDT</th><th>Block</th><th>Status</th><th>Observed (UTC)</th></tr></thead>
+        <tbody id="invoiceDetailsTransfers"></tbody></table></div>
+  </div>
+</div>
+
 <script>
     const API_BASE = '/api/v1';
 
@@ -227,6 +273,7 @@
                 document.getElementById('loginView').classList.add('hidden');
                 document.getElementById('dashboardView').classList.remove('hidden');
                 loadOverview();
+                loadInvoiceExplorer(1);
                 loadSubscription();
                 loadApiKeys();
                 loadTeam();
@@ -281,6 +328,8 @@
         clearTeamInvitation();
         document.getElementById("teamMembersTable").replaceChildren();
         document.getElementById("teamInviteForm").classList.add("hidden");
+        clearInvoiceExplorer();
+        closeInvoiceDetails();
         document.getElementById("defaultWebhookUrl").value = "";
         document.getElementById("webhookEventsTable").replaceChildren();
     }
@@ -711,6 +760,153 @@
             if (!response.ok) throw new Error('Redelivery rejected; the event may already be queued.');
             await loadWebhookEvents(webhookPage);
         } catch (e) { showWebhookError(e.message); }
+    }
+
+
+    let invoicePage = 1;
+    let invoiceLoadToken = 0;
+    let invoiceDetailsToken = 0;
+    const invoiceUsdt = units => (Number(units) / 1000000).toLocaleString(undefined, { maximumFractionDigits: 6 });
+    function invoiceUtc(value) {
+        const date = new Date(value);
+        return Number.isNaN(date.getTime()) ? '-' : date.toISOString().replace('T',' ').slice(0,19) + ' UTC';
+    }
+    function invoiceError(message) {
+        const target = document.getElementById('invoiceExplorerError');
+        target.textContent = message;
+        target.classList.toggle('hidden', !message);
+    }
+    function clearInvoiceExplorer() {
+        ++invoiceLoadToken;
+        document.getElementById('invoiceExplorerTable').replaceChildren();
+        document.getElementById('invoicePageText').textContent = '-';
+        document.getElementById('invoicePrev').disabled = true;
+        document.getElementById('invoiceNext').disabled = true;
+        invoiceError('');
+    }
+    function clearInvoiceFilters() {
+        document.getElementById('invoiceStatusFilter').value = 'all';
+        document.getElementById('invoiceFromDate').value = '';
+        document.getElementById('invoiceToDate').value = '';
+        loadInvoiceExplorer(1);
+    }
+    async function loadInvoiceExplorer(page) {
+        const token = ++invoiceLoadToken;
+        invoicePage = Math.max(1, Math.min(10000, page));
+        invoiceError('');
+        const start = document.getElementById('invoiceFromDate').value;
+        const end = document.getElementById('invoiceToDate').value;
+        if (start && end && start > end) return invoiceError('From date must not exceed To date.');
+        const params = new URLSearchParams({
+            page: String(invoicePage), pageSize: '10',
+            status: document.getElementById('invoiceStatusFilter').value
+        });
+        if (start) params.set('fromDateUtc', start + 'T00:00:00Z');
+        if (end) params.set('toDateUtc', end + 'T23:59:59.999Z');
+        const table = document.getElementById('invoiceExplorerTable');
+        table.replaceChildren();
+        const loading = table.insertRow().insertCell();
+        loading.colSpan = 7; loading.textContent = 'Loading...';
+        try {
+            const response = await fetch(API_BASE + '/dashboard/invoices?' + params.toString(),
+                { credentials: 'include', cache: 'no-store' });
+            if (token !== invoiceLoadToken) return;
+            if (response.status === 401 || response.status === 403) return showLogin();
+            if (!response.ok) throw new Error('Unable to load invoices.');
+            const result = await response.json();
+            if (token !== invoiceLoadToken) return;
+            table.replaceChildren();
+            if (!result.items.length) {
+                const cell = table.insertRow().insertCell();
+                cell.colSpan = 7; cell.textContent = 'No invoices found.';
+            }
+            for (const inv of result.items) {
+                const row = table.insertRow();
+                row.insertCell().textContent = inv.id.slice(0,8) + '…';
+                row.insertCell().textContent = Number(inv.fiatAmount).toFixed(2) + ' ' + inv.fiatCurrency;
+                row.insertCell().textContent = invoiceUsdt(inv.expectedAmountUnits);
+                row.insertCell().textContent = invoiceUsdt(inv.paidAmountUnits);
+                const status = row.insertCell();
+                status.textContent = inv.status;
+                status.className = ['Paid','Overpaid'].includes(inv.status) ? 'status-paid'
+                    : ['Pending','PartiallyPaid'].includes(inv.status) ? 'status-pending' : 'status-expired';
+                row.insertCell().textContent = invoiceUtc(inv.createdAtUtc);
+                const button = document.createElement('button');
+                button.type = 'button'; button.className = 'btn btn-secondary';
+                button.textContent = 'Details';
+                button.onclick = () => showInvoiceDetails(inv.id);
+                row.insertCell().appendChild(button);
+            }
+            const pages = Math.max(1, result.totalPages || 0);
+            document.getElementById('invoicePageText').textContent =
+                'Page ' + invoicePage + ' / ' + pages + ' · ' + result.totalCount + ' invoices';
+            document.getElementById('invoicePrev').disabled = invoicePage <= 1;
+            document.getElementById('invoiceNext').disabled = invoicePage >= pages;
+        } catch(e) {
+            if (token !== invoiceLoadToken) return;
+            table.replaceChildren();
+            invoiceError(e.message || 'Unable to load invoices.');
+        }
+    }
+    function closeInvoiceDetails() {
+        ++invoiceDetailsToken;
+        document.getElementById('invoiceDetailsModal').classList.add('hidden');
+        document.getElementById('invoiceDetailsFields').replaceChildren();
+        document.getElementById('invoiceDetailsTransfers').replaceChildren();
+        document.getElementById('invoiceDetailsError').classList.add('hidden');
+    }
+    function addInvoiceDetail(key, value) {
+        const container = document.getElementById('invoiceDetailsFields');
+        const term = document.createElement('dt');
+        const description = document.createElement('dd');
+        term.textContent = key;
+        description.textContent = String(value ?? '-');
+        container.append(term, description);
+    }
+    async function showInvoiceDetails(id) {
+        const token = ++invoiceDetailsToken;
+        document.getElementById('invoiceDetailsModal').classList.remove('hidden');
+        document.getElementById('invoiceDetailsFields').replaceChildren();
+        document.getElementById('invoiceDetailsTransfers').replaceChildren();
+        document.getElementById('invoiceDetailsError').classList.add('hidden');
+        try {
+            const response = await fetch(API_BASE + '/dashboard/invoices/' + encodeURIComponent(id),
+                { credentials: 'include', cache: 'no-store' });
+            if (token !== invoiceDetailsToken) return;
+            if (response.status === 401 || response.status === 403) return showLogin();
+            if (!response.ok) throw new Error('Unable to load invoice details.');
+            const result = await response.json();
+            if (token !== invoiceDetailsToken) return;
+            addInvoiceDetail('Invoice ID', result.id);
+            addInvoiceDetail('Status', result.status);
+            addInvoiceDetail('Fiat amount', Number(result.fiatAmount).toFixed(2) + ' ' + result.fiatCurrency);
+            addInvoiceDetail('Expected', invoiceUsdt(result.expectedAmountUnits) + ' ' + result.currency);
+            addInvoiceDetail('Received', invoiceUsdt(result.paidAmountUnits) + ' ' + result.currency);
+            addInvoiceDetail('Deposit address', result.depositAddress);
+            addInvoiceDetail('Network', result.network);
+            addInvoiceDetail('Created', invoiceUtc(result.createdAtUtc));
+            addInvoiceDetail('Expires', invoiceUtc(result.expiresAtUtc));
+            addInvoiceDetail('Paid', result.paidAtUtc ? invoiceUtc(result.paidAtUtc) : '-');
+            const table = document.getElementById('invoiceDetailsTransfers');
+            if (!result.transfers?.length) {
+                const cell = table.insertRow().insertCell();
+                cell.colSpan = 6; cell.textContent = 'No transfers observed.';
+            }
+            for (const tx of result.transfers || []) {
+                const row = table.insertRow();
+                row.insertCell().textContent = tx.transactionHash;
+                row.insertCell().textContent = tx.fromAddress;
+                row.insertCell().textContent = invoiceUsdt(tx.amountUnits);
+                row.insertCell().textContent = String(tx.blockNumber);
+                row.insertCell().textContent = tx.status;
+                row.insertCell().textContent = invoiceUtc(tx.observedAtUtc);
+            }
+        } catch(e) {
+            if (token !== invoiceDetailsToken) return;
+            const target = document.getElementById('invoiceDetailsError');
+            target.textContent = e.message || 'Unable to load invoice.';
+            target.classList.remove('hidden');
+        }
     }
 
     // Initialize

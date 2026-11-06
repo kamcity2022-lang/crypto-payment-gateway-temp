@@ -195,3 +195,12 @@
 - Escape rendered merchant data and use DOM textContent for subscription and plan values.
 - Includes HTTP-served admin.html smoke test; existing PostgreSQL integration tests cover backend subscription transitions.
 - No schema, recurring billing, or payment processing changes.
+
+## Phase 2 — Merchant Invoice Explorer
+**Status:** Draft PR, CI pending.
+- A complete tenant-scoped invoice explorer in Merchant Dashboard: status and UTC date filters, pagination, invoice details and blockchain transfer records.
+- The existing read-only invoice APIs remain the source of truth; no new schema or payment-state mutations.
+- Dashboard list validates status (including rejecting numeric/unknown enum values), date range and paging; ordering by CreatedAtUtc plus Id is stable.
+- Safe DOM textContent is used for data (no HTML interpolation). Authenticated sessions protect list/details; async response sequencing prevents stale results after logout/filter changes.
+- HTTP/PostgreSQL integration tests cover filtering, other-merchant isolation, invoice details and invalid query ranges; HTML smoke test checks controls.
+- Full operational audit/monitoring, docs and production security hardening remain before launch.
