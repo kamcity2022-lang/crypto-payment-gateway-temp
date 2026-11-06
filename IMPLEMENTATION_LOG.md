@@ -182,3 +182,16 @@
 - Existing PostgreSQL/HTTP integration tests cover plan management state transitions, authorization, uniqueness and impact on invoice quotas.
 - Adds a static served HTML integration smoke test covering main controls and API bindings.
 - No migration or changes to subscription billing logic.
+
+## Phase 2 — SuperAdmin Merchant Subscription UI
+**Status:** Draft PR, pending CI.
+
+- Merchant list and details provide a subscription-management entry point.
+- View the current plan, subscription state, invoice/USD quota consumption, period dates and any overrides.
+- Assign new subscriptions, change plans, modify/clear merchant-specific quota overrides, and cancel active subscriptions.
+- View subscription history using existing SuperAdmin-only APIs.
+- Active-plan selector excludes inactive plans and handles missing/cancelled subscriptions.
+- Confirm state-changing operations; changing a plan preserves consumption and custom overrides; assignment does not imply billing or payment.
+- Escape rendered merchant data and use DOM textContent for subscription and plan values.
+- Includes HTTP-served admin.html smoke test; existing PostgreSQL integration tests cover backend subscription transitions.
+- No schema, recurring billing, or payment processing changes.
