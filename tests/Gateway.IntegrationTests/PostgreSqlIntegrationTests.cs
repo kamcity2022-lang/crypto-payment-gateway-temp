@@ -185,6 +185,80 @@ public class PostgreSqlIntegrationTests : IAsyncLifetime
         handler.Captured.Should().HaveCount(1);
         handler.Captured[0].Req.RequestUri!.AbsolutePath.Should().Be("/webhook-redirect");
     }
+
+    [Fact]
+    public async Task OutboxDispatcher_ExpiredLease_StaleWorkerCannotOverwriteNewerSuccessfulDelivery()
+    {
+        var encrypted = _secretProtector.Encrypt("lease-test-secret");
+        var evt = new OutboxEvent(Guid.NewGuid(), "invoice.paid", "{\"verified\":true}",
+            "https://webhook.example.com/lease", encrypted);
+        _dbContext.OutboxEvents.Add(evt);
+        await _dbContext.SaveChangesAsync();
+
+        var blockedHandler = new BlockingWebhookHandler();
+        using var firstHttp = new HttpClient(blockedHandler);
+        using var secondHttp = new HttpClient(new CapturingHttpMessageHandler(
+            _ => new HttpResponseMessage(HttpStatusCode.OK)));
+
+        var options = new DbContextOptionsBuilder<GatewayDbContext>()
+            .UseNpgsql(_dbContainer.GetConnectionString()).Options;
+        await using var firstDb = new GatewayDbContext(options);
+        await using var secondDb = new GatewayDbContext(options);
+
+        var first = new WebhookDispatcher(firstDb, firstHttp, _secretProtector,
+            NullLogger<WebhookDispatcher>.Instance);
+        var second = new WebhookDispatcher(secondDb, secondHttp, _secretProtector,
+            NullLogger<WebhookDispatcher>.Instance);
+
+        var firstJob = first.DispatchPendingWebhooksAsync(CancellationToken.None);
+        await blockedHandler.WaitUntilStartedAsync().WaitAsync(TimeSpan.FromSeconds(10));
+
+        // Emulate time passing beyond a worker's lease while its HTTPS request
+        // is still outstanding. Worker 2 acquires and completes the same event.
+        await _dbContext.Database.ExecuteSqlInterpolatedAsync(
+            $"UPDATE \"OutboxEvents\" SET \"LockedUntilUtc\" = {DateTime.UtcNow.AddSeconds(-1)} WHERE \"Id\" = {evt.Id}");
+
+        await second.DispatchPendingWebhooksAsync(CancellationToken.None);
+        blockedHandler.Release(HttpStatusCode.InternalServerError);
+        await firstJob.WaitAsync(TimeSpan.FromSeconds(10));
+
+        await using var verify = new GatewayDbContext(options);
+        var persisted = await verify.OutboxEvents.AsNoTracking()
+            .SingleAsync(x => x.Id == evt.Id);
+        persisted.IsProcessed.Should().BeTrue();
+        persisted.AttemptCount.Should().Be(1);
+        persisted.LastError.Should().BeNull();
+        persisted.NextAttemptAtUtc.Should().BeNull();
+        persisted.LockedUntilUtc.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task OutboxDispatcher_TransportFailure_DoesNotPersistSensitiveExceptionMessage()
+    {
+        var encrypted = _secretProtector.Encrypt("secret-not-to-log");
+        var evt = new OutboxEvent(Guid.NewGuid(), "invoice.paid", "{}",
+            "https://webhook.example.com/fail", encrypted);
+        _dbContext.OutboxEvents.Add(evt);
+        await _dbContext.SaveChangesAsync();
+
+        using var http = new HttpClient(new FailingWebhookHandler(
+            "Authorization: secret-not-to-log"));
+        var dispatcher = new WebhookDispatcher(_dbContext, http, _secretProtector,
+            NullLogger<WebhookDispatcher>.Instance);
+
+        await dispatcher.DispatchPendingWebhooksAsync(CancellationToken.None);
+        await using var verify = new GatewayDbContext(
+            new DbContextOptionsBuilder<GatewayDbContext>()
+                .UseNpgsql(_dbContainer.GetConnectionString()).Options);
+        var persisted = await verify.OutboxEvents.AsNoTracking()
+            .SingleAsync(x => x.Id == evt.Id);
+        persisted.IsProcessed.Should().BeFalse();
+        persisted.AttemptCount.Should().Be(1);
+        persisted.LastError.Should().Be("Webhook transport failure.");
+        persisted.LastError.Should().NotContain("secret-not-to-log");
+        persisted.LockedUntilUtc.Should().BeNull();
+        persisted.NextAttemptAtUtc.Should().NotBeNull();
+    }
 }
 
 /// <summary>
@@ -204,4 +278,32 @@ public sealed class CapturingHttpMessageHandler : HttpMessageHandler
         Captured.Add((request, body));
         return _responder(request);
     }
+}
+internal sealed class BlockingWebhookHandler : HttpMessageHandler
+{
+    private readonly TaskCompletionSource<bool> _started =
+        new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly TaskCompletionSource<HttpStatusCode> _release =
+        new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    public Task WaitUntilStartedAsync() => _started.Task;
+    public void Release(HttpStatusCode result) => _release.TrySetResult(result);
+
+    protected override async Task<HttpResponseMessage> SendAsync(
+        HttpRequestMessage request, CancellationToken cancellationToken)
+    {
+        _started.TrySetResult(true);
+        var result = await _release.Task.WaitAsync(cancellationToken);
+        return new HttpResponseMessage(result);
+    }
+}
+
+internal sealed class FailingWebhookHandler : HttpMessageHandler
+{
+    private readonly string _message;
+    public FailingWebhookHandler(string message) => _message = message;
+
+    protected override Task<HttpResponseMessage> SendAsync(
+        HttpRequestMessage request, CancellationToken cancellationToken) =>
+        throw new HttpRequestException(_message);
 }
