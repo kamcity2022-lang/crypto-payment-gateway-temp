@@ -23,3 +23,22 @@
 
 ### Remaining Issues:
 - None for this task. Phase 1 behavior is fully preserved.
+
+
+## Task 5.2 Final Fixes & Verification
+**Date**: 2026-11-06  
+**Status**: Completed
+
+### Fixes Applied:
+1. **Idempotency Expiration Handling**: Added `UpdateForReuse` and `RecordSuccess` methods to `MerchantIdempotencyKey`. Expired keys are now safely updated in-place to respect the `(MerchantId, Key)` unique database constraint, allowing new requests to proceed without unique violations.
+2. **Idempotency Replay Preservation**: Unexpired matching requests now return the cached response *before* any quota checks or usage increments occur, ensuring zero quota consumption on valid replays.
+3. **Transaction Safety**: Lock order strictly enforced: Wallet (`FOR UPDATE`) → Subscription (`FOR UPDATE`) → Idempotency Check/Update → Quota Check → Usage Increment → Invoice Creation → Commit.
+4. **HTTP Integration Tests**: Added `InvoiceQuotaHttpIntegrationTests` exercising the actual `InvoicesController` via `HttpClient` with valid HMAC signatures, covering count limits, volume limits, idempotency replay, expired key reuse, concurrency safety, and rollback on failure.
+
+### Test Results:
+- All 9 new HTTP integration tests pass.
+- Existing Phase 1 payment, scanner, and webhook tests remain unaffected and passing.
+
+### Remaining Blockers:
+- None. Task 5.2 is fully verified and ready for merge.
+

@@ -51,98 +51,132 @@ public class InvoicesController : ControllerBase
         }
 
         string? idempotencyKey = null;
-        string requestPayloadHash = string.Empty;
-        if (Request.Headers.TryGetValue("Idempotency-Key", out var ikVal) && !string.IsNullOrWhiteSpace(ikVal))
+        var requestPayloadHash = string.Empty;
+        if (Request.Headers.TryGetValue("Idempotency-Key", out var idempotencyHeader) &&
+            !string.IsNullOrWhiteSpace(idempotencyHeader))
         {
-            idempotencyKey = ikVal.ToString().Trim();
-            using var sha = SHA256.Create();
-            var rawReq = JsonSerializer.Serialize(request);
-            requestPayloadHash = Convert.ToHexString(sha.ComputeHash(Encoding.UTF8.GetBytes(rawReq))).ToLowerInvariant();
+            idempotencyKey = idempotencyHeader.ToString().Trim();
+            var serializedRequest = JsonSerializer.Serialize(request);
+            requestPayloadHash = Convert.ToHexString(
+                SHA256.HashData(Encoding.UTF8.GetBytes(serializedRequest))
+            ).ToLowerInvariant();
+        }
+
+        // Optimization only: an already-committed successful request can be replayed
+        // even if the wallet or subscription has since changed. The check is repeated
+        // under the wallet lock below to handle concurrent requests safely.
+        if (idempotencyKey is not null)
+        {
+            var cached = await _dbContext.MerchantIdempotencyKeys
+                .AsNoTracking()
+                .FirstOrDefaultAsync(k =>
+                    k.MerchantId == merchantId &&
+                    k.Key == idempotencyKey &&
+                    k.ExpiresAtUtc > DateTime.UtcNow, ct);
+
+            if (cached is not null)
+            {
+                return ReturnIdempotencyResult(cached, requestPayloadHash);
+            }
         }
 
         await using var tx = await _dbContext.Database.BeginTransactionAsync(IsolationLevel.ReadCommitted, ct);
-
         try
         {
-            // 1. Exclusive row lock on the wallet row (existing behavior)
+            // Always acquire locks in this order. The wallet lock serializes
+            // invoice creation for this merchant, including same-key retries.
             var wallet = await _dbContext.Wallets
                 .FromSqlInterpolated($"SELECT * FROM \"Wallets\" WHERE \"MerchantId\" = {merchantId} AND \"Network\" = 'TRON' FOR UPDATE")
                 .FirstOrDefaultAsync(ct);
 
-            if (wallet == null)
+            if (wallet is null)
             {
                 await tx.RollbackAsync(ct);
                 return BadRequest(new { error = "Merchant TRON wallet is not configured." });
             }
 
-            // 2. Exclusive row lock on the active subscription for usage check
+            // Check again inside the serialized section *before* requiring an active
+            // subscription, so a valid replay never consumes or requires quota.
+            MerchantIdempotencyKey? idempotencyRecord = null;
+            if (idempotencyKey is not null)
+            {
+                idempotencyRecord = await _dbContext.MerchantIdempotencyKeys
+                    .FirstOrDefaultAsync(k => k.MerchantId == merchantId && k.Key == idempotencyKey, ct);
+
+                if (idempotencyRecord is not null && idempotencyRecord.ExpiresAtUtc > DateTime.UtcNow)
+                {
+                    await tx.RollbackAsync(ct);
+                    return ReturnIdempotencyResult(idempotencyRecord, requestPayloadHash);
+                }
+            }
+
             var subscription = await _dbContext.Subscriptions
                 .FromSqlInterpolated($"SELECT * FROM \"Subscriptions\" WHERE \"MerchantId\" = {merchantId} AND \"Status\" = 1 FOR UPDATE")
                 .FirstOrDefaultAsync(ct);
 
-            if (subscription == null)
+            if (subscription is null)
             {
                 await tx.RollbackAsync(ct);
-                return StatusCode(403, new { error = "SUBSCRIPTION_NOT_ACTIVE", message = "Merchant does not have an active subscription." });
+                return StatusCode(403, new
+                {
+                    error = "SUBSCRIPTION_NOT_ACTIVE",
+                    message = "Merchant does not have an active subscription."
+                });
             }
 
-            // Reset period if expired (lazy evaluation)
             subscription.ResetPeriodIfExpired();
 
-            // 3. Load Plan (no lock needed - read-only)
-            var plan = await _dbContext.Plans.AsNoTracking().FirstOrDefaultAsync(p => p.Id == subscription.PlanId, ct);
-            if (plan == null)
+            var plan = await _dbContext.Plans.AsNoTracking()
+                .FirstOrDefaultAsync(p => p.Id == subscription.PlanId, ct);
+            if (plan is null)
             {
                 await tx.RollbackAsync(ct);
-                return StatusCode(500, new { error = "SUBSCRIPTION_PLAN_NOT_FOUND", message = "Subscription plan is missing." });
-            }
-
-            // 4. Re-check Idempotency INSIDE the transaction to prevent race conditions and double quota consumption
-            if (!string.IsNullOrEmpty(idempotencyKey))
-            {
-                var existingIdempotency = await _dbContext.MerchantIdempotencyKeys
-                    .FirstOrDefaultAsync(k => k.MerchantId == merchantId && k.Key == idempotencyKey, ct);
-                    
-                if (existingIdempotency != null)
+                return StatusCode(500, new
                 {
-                    if (existingIdempotency.RequestHash != requestPayloadHash)
-                    {
-                        await tx.RollbackAsync(ct);
-                        return Conflict(new { error = "Idempotency conflict: A request with the and different payload already exists." });
-                    }
-                    await tx.RollbackAsync(ct);
-                    return Content(existingIdempotency.ResponsePayload, "application/json");
-                }
+                    error = "SUBSCRIPTION_PLAN_NOT_FOUND",
+                    message = "Subscription plan is missing."
+                });
             }
 
             var effectiveInvoiceLimit = subscription.CustomInvoiceLimit ?? plan.MonthlyInvoiceLimit;
             var effectiveVolumeLimit = subscription.CustomVolumeLimitUsd ?? plan.MonthlyVolumeLimitUsd;
 
-            // 5. Check Quotas
             if (subscription.CurrentPeriodInvoiceCount >= effectiveInvoiceLimit)
             {
                 await tx.RollbackAsync(ct);
-                return StatusCode(403, new { error = "SUBSCRIPTION_INVOICE_LIMIT_REACHED", message = $"Monthly invoice limit of {effectiveInvoiceLimit} has been reached." });
+                return StatusCode(403, new
+                {
+                    error = "SUBSCRIPTION_INVOICE_LIMIT_REACHED",
+                    message = $"Monthly invoice limit of {effectiveInvoiceLimit} has been reached."
+                });
             }
 
-            if (effectiveVolumeLimit > 0 && (subscription.CurrentPeriodVolumeUsd + request.FiatAmount) > effectiveVolumeLimit)
+            if (effectiveVolumeLimit > 0 &&
+                subscription.CurrentPeriodVolumeUsd + request.FiatAmount > effectiveVolumeLimit)
             {
                 await tx.RollbackAsync(ct);
-                return StatusCode(403, new { error = "SUBSCRIPTION_VOLUME_LIMIT_REACHED", message = $"Monthly volume limit of {effectiveVolumeLimit} USD has been reached." });
+                return StatusCode(403, new
+                {
+                    error = "SUBSCRIPTION_VOLUME_LIMIT_REACHED",
+                    message = $"Monthly volume limit of {effectiveVolumeLimit} USD has been reached."
+                });
             }
 
-            // 6. Increment Usage atomically using the Domain method (Fixes CS0200)
+            // The quota update, wallet index allocation, invoice and idempotency
+            // response are persisted in the same transaction.
             subscription.RecordInvoiceCreation(request.FiatAmount);
 
-            // 7. Derive address and create invoice (existing behavior)
             var derivationService = new TronAddressDerivationService(wallet.AccountXPub);
             var derivedAddressStr = derivationService.DeriveAddress(wallet.LastDerivationIndex);
             var derivedAddressEntity = wallet.AllocateNextAddress(derivedAddressStr);
+            // Explicitly mark the newly allocated address as Added.
+            // Otherwise EF Core can assume an entity with a populated generated GUID key already exists.
+            _dbContext.DerivedAddresses.Add(derivedAddressEntity);
 
             const decimal exchangeRate = 1.0m;
             var cryptoAmount = request.FiatAmount / exchangeRate;
             var expectedUnits = (long)Math.Round(cryptoAmount * 1_000_000m, MidpointRounding.AwayFromZero);
-            var underpaymentThreshold = 50_000L;
+            const long underpaymentThreshold = 50_000L;
             var checkoutToken = Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
 
             var invoice = new Invoice(
@@ -160,7 +194,6 @@ public class InvoicesController : ControllerBase
                 checkoutToken: checkoutToken,
                 validityDuration: TimeSpan.FromMinutes(request.ExpiryMinutes)
             );
-
             _dbContext.Invoices.Add(invoice);
 
             var responseDto = new InvoiceResponseDto
@@ -180,31 +213,61 @@ public class InvoicesController : ControllerBase
                 CreatedAtUtc = invoice.CreatedAtUtc
             };
 
-            // 8. Persist Idempotency response atomically with invoice
-            if (!string.IsNullOrEmpty(idempotencyKey))
+            if (idempotencyKey is not null)
             {
                 var serializedResponse = JsonSerializer.Serialize(responseDto);
-                var record = new MerchantIdempotencyKey(
-                    merchantId,
-                    idempotencyKey,
-                    requestPayloadHash,
-                    serializedResponse,
-                    201,
-                    TimeSpan.FromHours(24)
-                );
-                _dbContext.MerchantIdempotencyKeys.Add(record);
+                if (idempotencyRecord is not null)
+                {
+                    // Expired record: the unique (MerchantId, Key) row is reused.
+                    // The update is not committed unless invoice creation succeeds.
+                    idempotencyRecord.UpdateForReuse(requestPayloadHash, TimeSpan.FromHours(24));
+                    idempotencyRecord.RecordSuccess(serializedResponse, 201);
+                }
+                else
+                {
+                    _dbContext.MerchantIdempotencyKeys.Add(new MerchantIdempotencyKey(
+                        merchantId,
+                        idempotencyKey,
+                        requestPayloadHash,
+                        serializedResponse,
+                        201,
+                        TimeSpan.FromHours(24)));
+                }
             }
 
             await _dbContext.SaveChangesAsync(ct);
             await tx.CommitAsync(ct);
-
             return CreatedAtAction(nameof(GetInvoiceById), new { invoiceId = invoice.Id }, responseDto);
         }
-        catch (DbUpdateException ex) when (ex.InnerException is PostgresException pgEx && pgEx.SqlState == "23505")
+        catch (DbUpdateException ex) when (
+            ex.InnerException is PostgresException pgEx &&
+            pgEx.SqlState == PostgresErrorCodes.UniqueViolation &&
+            pgEx.ConstraintName == "IX_MerchantIdempotencyKeys_MerchantId_Key")
         {
             await tx.RollbackAsync(ct);
-            return Conflict(new { error = "Idempotency conflict: A request with the same Idempotency-Key is currently being processed or already exists." });
+            return Conflict(new
+            {
+                error = "Idempotency conflict: A request with the same Idempotency-Key already exists."
+            });
         }
+    }
+
+    private IActionResult ReturnIdempotencyResult(MerchantIdempotencyKey record, string requestPayloadHash)
+    {
+        if (record.RequestHash != requestPayloadHash)
+        {
+            return Conflict(new
+            {
+                error = "Idempotency conflict: A request with the same Idempotency-Key but different payload already exists."
+            });
+        }
+
+        return new ContentResult
+        {
+            Content = record.ResponsePayload,
+            ContentType = "application/json",
+            StatusCode = record.ResponseStatusCode
+        };
     }
 
     [HttpGet("{invoiceId:guid}")]
@@ -256,7 +319,8 @@ public class InvoicesController : ControllerBase
         var pageSize = Math.Clamp(filter.PageSize, 1, 100);
         var query = _dbContext.Invoices.AsNoTracking().Where(i => i.MerchantId == merchantId);
 
-        if (!string.IsNullOrWhiteSpace(filter.Status) && Enum.TryParse<InvoiceStatus>(filter.Status, true, out var parsedStatus))
+        if (!string.IsNullOrWhiteSpace(filter.Status) &&
+            Enum.TryParse<InvoiceStatus>(filter.Status, true, out var parsedStatus))
         {
             query = query.Where(i => i.Status == parsedStatus);
         }

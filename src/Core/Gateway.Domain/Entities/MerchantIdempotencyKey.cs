@@ -1,5 +1,4 @@
-﻿using System;
-
+﻿
 namespace Gateway.Domain.Entities;
 
 public class MerchantIdempotencyKey
@@ -25,7 +24,7 @@ public class MerchantIdempotencyKey
     {
         if (string.IsNullOrWhiteSpace(key))
             throw new ArgumentException("Idempotency key cannot be empty.", nameof(key));
-
+        
         Id = Guid.NewGuid();
         MerchantId = merchantId;
         Key = key.Trim();
@@ -34,5 +33,22 @@ public class MerchantIdempotencyKey
         ResponseStatusCode = responseStatusCode;
         CreatedAtUtc = DateTime.UtcNow;
         ExpiresAtUtc = CreatedAtUtc.Add(validityDuration);
+    }
+
+    // ✅ NEW: Safely reuse an expired idempotency record to respect unique constraints
+    public void UpdateForReuse(string newRequestHash, TimeSpan validityDuration)
+    {
+        RequestHash = newRequestHash;
+        ResponsePayload = string.Empty;
+        ResponseStatusCode = 0;
+        CreatedAtUtc = DateTime.UtcNow;
+        ExpiresAtUtc = CreatedAtUtc.Add(validityDuration);
+    }
+
+    // ✅ NEW: Record success payload atomically
+    public void RecordSuccess(string payload, int statusCode)
+    {
+        ResponsePayload = payload;
+        ResponseStatusCode = statusCode;
     }
 }
