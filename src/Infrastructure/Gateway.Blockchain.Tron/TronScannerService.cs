@@ -24,6 +24,7 @@ public class TronScannerService : ITronScannerService
     private readonly IConfiguration _configuration;
     private readonly ILogger<TronScannerService> _logger;
     private readonly string _usdtContractAddress;
+    private readonly TronNetworkEndpoints _network;
     private const string TransferTopicSignature = "ddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
 
     public TronScannerService(
@@ -36,9 +37,8 @@ public class TronScannerService : ITronScannerService
         _httpClient = httpClient;
         _configuration = configuration;
         _logger = logger;
-        _usdtContractAddress = configuration["Tron:UsdtContractAddress"]
-                               ?? throw new InvalidOperationException(
-                                   "Configuration 'Tron:UsdtContractAddress' is required.");
+        _network = TronNetworkEndpoints.FromConfiguration(configuration);
+        _usdtContractAddress = _network.TokenContract;
     }
 
     public async Task ScanPendingDepositsAsync(CancellationToken cancellationToken)
@@ -118,12 +118,12 @@ public class TronScannerService : ITronScannerService
         while (hasMorePages)
         {
             var url =
-                $"https://api.trongrid.io/v1/accounts/{invoice.DepositAddress}/transactions/trc20?contract_address={_usdtContractAddress}&limit=20";
+                $"v1/accounts/{invoice.DepositAddress}/transactions/trc20?contract_address={_usdtContractAddress}&limit=20";
             if (!string.IsNullOrEmpty(fingerprint)) url += $"&fingerprint={Uri.EscapeDataString(fingerprint)}";
             else if (cursor.LastProcessedBlockTimestamp > 0)
                 url += $"&min_timestamp={cursor.LastProcessedBlockTimestamp}";
 
-            using var request = new HttpRequestMessage(HttpMethod.Get, url);
+            using var request = new HttpRequestMessage(HttpMethod.Get, _network.Endpoint(url));
             using var response = await _httpClient.SendAsync(request, ct);
             if (!response.IsSuccessStatusCode) return false;
 
@@ -270,7 +270,7 @@ public class TronScannerService : ITronScannerService
     {
         try
         {
-            var res = await _httpClient.GetAsync("https://api.trongrid.io/walletsolidity/getnowblock", ct);
+            var res = await _httpClient.GetAsync(_network.Endpoint("walletsolidity/getnowblock"), ct);
             if (!res.IsSuccessStatusCode) return 0;
             var json = await res.Content.ReadAsStringAsync(ct);
             using var doc = JsonDocument.Parse(json);
@@ -297,7 +297,7 @@ public class TronScannerService : ITronScannerService
 
             var jsonPayload = JsonSerializer.Serialize(new { value = txHash });
             using var content = new StringContent(jsonPayload, Encoding.UTF8, "application/json");
-            var res = await _httpClient.PostAsync("https://api.trongrid.io/walletsolidity/gettransactioninfobyid",
+            var res = await _httpClient.PostAsync(_network.Endpoint("walletsolidity/gettransactioninfobyid"),
                 content, ct);
             if (!res.IsSuccessStatusCode) return (false, false, 0);
 
