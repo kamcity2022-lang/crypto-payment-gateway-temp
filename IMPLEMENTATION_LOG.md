@@ -114,3 +114,13 @@
 - Distinguish provider timeout from host cancellation. Do not persist full transport exception messages that could contain sensitive data.
 - Keep HTTPS-only webhook destinations and existing retry/dead-letter/manual-redelivery behavior.
 - No new schema changes, billing, admin UI or secret configuration changes.
+
+## P0.3d — Invoice Status / Webhook Consistency
+**Status:** Implemented on separate PR, pending CI.
+
+- Hosted Checkout is a read-only projection; it never persists a payment/expiration transition.
+- The Scanner Worker now persists Pending -> Expired and PartiallyPaid -> Underpaid time transitions and their signed Outbox events in the same DB transaction.
+- Time transition evaluation occurs only after successfully scanning the address, preventing phantom expiration when a late payment exists on chain.
+- Paid and Overpaid invoices continue to be scanned within the configured overpayment retention window to account for later transfers.
+- Shared webhook event constructor ensures consistent status payload and fails the transaction if Merchant data is missing.
+- Tests verify outbox parity, no duplicate expiry events, recovery, late payments, and continuing overpayment processing.

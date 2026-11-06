@@ -27,20 +27,18 @@ public class CheckoutController : ControllerBase
             return BadRequest(new { error = "Checkout token is required." });
 
         var invoice = await _dbContext.Invoices
+            .AsNoTracking()
             .Include(i => i.Transfers)
             .FirstOrDefaultAsync(i => i.CheckoutToken == token, ct);
 
         if (invoice == null)
             return NotFound(new { error = "Payment checkout session not found." });
 
-        var previousStatus = invoice.Status;
+        // Only derive the current display status. Public reads must not
+        // persist invoice transitions without an accompanying Outbox event.
+        // The Scanner Worker owns persistent payment/expiry transitions.
         invoice.EvaluateStatus();
-
-        // Persist expiration or status changes atomically
-        if (previousStatus != invoice.Status)
-        {
-            await _dbContext.SaveChangesAsync(ct);
-        }
+        Response.Headers.CacheControl = "no-store";
 
         var remainingSeconds = Math.Max(0, (long)(invoice.ExpiresAtUtc - DateTime.UtcNow).TotalSeconds);
 
